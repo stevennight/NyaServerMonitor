@@ -56,4 +56,69 @@ func TestAgentReportAuthenticatesAndRejectsReplay(t *testing.T) {
 	}
 }
 
+func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/public.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Status: model.NodePending}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateNode(ctx, model.Node{ID: "node_revoked", Name: "Hidden revoked", Status: model.NodeRevoked}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateReport(ctx, model.Report{
+		ProtocolVersion: model.ProtocolVersion,
+		NodeID:          "node_public",
+		SentAtUnix:      time.Now().Unix(),
+		Sequence:        1,
+		AgentVersion:    "private-agent",
+		System:          model.SystemInfo{Hostname: "internal-host", IP: "10.0.0.5", OS: "linux", Kernel: "private-kernel"},
+		Metrics: model.MetricsSnapshot{
+			CPUPercent:       37.4,
+			MemoryUsedBytes:  60,
+			MemoryTotalBytes: 100,
+			Disks:            []model.DiskMetric{{Mount: "/", UsedBytes: 80, TotalBytes: 100}},
+		},
+		Checks: []model.ServiceCheck{{Name: "private-db", Target: "10.0.0.6:5432", Status: "down"}},
+	}, "10.0.0.5"); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+	request := httptest.NewRequest(http.MethodGet, "/api/public/dashboard", nil)
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("public dashboard status: %d %s", response.Code, response.Body.String())
+	}
+	var dashboard model.PublicDashboard
+	if err := json.Unmarshal(response.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalNodes != 1 || len(dashboard.Nodes) != 1 {
+		t.Fatalf("unexpected public dashboard: %#v", dashboard)
+	}
+	publicNode := dashboard.Nodes[0]
+	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
+		t.Fatalf("unexpected public node: %#v", publicNode)
+	}
+	body := response.Body.String()
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-agent", "private-db", "10.0.0.6:5432"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("public response leaked %q: %s", secret, body)
+		}
+	}
+	if response.Header().Get("Cache-Control") != "public, max-age=5, stale-while-revalidate=15" {
+		t.Fatalf("unexpected public cache policy: %q", response.Header().Get("Cache-Control"))
+	}
+	privateRequest := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	privateResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(privateResponse, privateRequest)
+	if privateResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("private dashboard should require auth, got %d", privateResponse.Code)
+	}
+}
+
 func formatInt(value int64) string { return strconv.FormatInt(value, 10) }

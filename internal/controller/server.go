@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -37,14 +38,17 @@ const (
 var webFiles embed.FS
 
 type Server struct {
-	cfg      Config
-	log      *slog.Logger
-	store    *store.Store
-	sessions *auth.Sessions
-	limiter  *auth.LoginLimiter
-	mux      *http.ServeMux
-	nonces   *nonceCache
-	setupMu  sync.Mutex
+	cfg        Config
+	log        *slog.Logger
+	store      *store.Store
+	sessions   *auth.Sessions
+	limiter    *auth.LoginLimiter
+	mux        *http.ServeMux
+	nonces     *nonceCache
+	setupMu    sync.Mutex
+	publicMu   sync.Mutex
+	publicAt   time.Time
+	publicBody []byte
 }
 
 type nonceCache struct {
@@ -145,6 +149,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/settings/totp/setup", s.withAuth(s.handleTOTPSetup))
 	s.mux.HandleFunc("POST /api/settings/totp/enable", s.withAuth(s.handleTOTPEnable))
 	s.mux.HandleFunc("POST /api/settings/totp/disable", s.withAuth(s.handleTOTPDisable))
+	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/dashboard", s.withAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/audit", s.withAuth(s.handleAudit))
 	s.mux.HandleFunc("GET /api/controller/info", s.withAuth(s.handleControllerInfo))
@@ -402,6 +407,112 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session
 	}
 	dashboard.TotalNodes = len(nodes)
 	writeJSON(w, http.StatusOK, dashboard)
+}
+
+const publicDashboardCacheTTL = 5 * time.Second
+
+func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	s.publicMu.Lock()
+	if len(s.publicBody) > 0 && now.Sub(s.publicAt) < publicDashboardCacheTTL {
+		body := append([]byte(nil), s.publicBody...)
+		s.publicMu.Unlock()
+		writePublicDashboard(w, body)
+		return
+	}
+	s.publicMu.Unlock()
+
+	_ = s.store.MarkOffline(r.Context(), now.UTC().Add(-s.cfg.OfflineAfter))
+	nodes, err := s.store.ListNodes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
+		return
+	}
+	body, err := json.Marshal(buildPublicDashboard(nodes, now.Unix()))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
+		return
+	}
+	s.publicMu.Lock()
+	s.publicAt = now
+	s.publicBody = append(s.publicBody[:0], body...)
+	s.publicMu.Unlock()
+	writePublicDashboard(w, body)
+}
+
+func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.PublicDashboard {
+	dashboard := model.PublicDashboard{GeneratedAtUnix: generatedAtUnix, Nodes: make([]model.PublicNode, 0, len(nodes))}
+	for _, node := range nodes {
+		if node.Status == model.NodeRevoked {
+			continue
+		}
+		publicNode := model.PublicNode{
+			Name:          node.Name,
+			Status:        node.Status,
+			CPUPercent:    coarsePercent(node.Metrics.CPUPercent),
+			MemoryPercent: percentOf(node.Metrics.MemoryUsedBytes, node.Metrics.MemoryTotalBytes),
+			DiskPercent:   publicDiskPercent(node.Metrics.Disks),
+		}
+		for _, check := range node.Checks {
+			publicNode.ChecksTotal++
+			if check.Status == "up" {
+				publicNode.ChecksUp++
+			}
+		}
+		dashboard.Nodes = append(dashboard.Nodes, publicNode)
+		dashboard.TotalNodes++
+		switch node.Status {
+		case model.NodeOnline:
+			dashboard.OnlineNodes++
+		case model.NodeOffline:
+			dashboard.OfflineNodes++
+		case model.NodePending:
+			dashboard.PendingNodes++
+		}
+		if publicNode.ChecksTotal > publicNode.ChecksUp {
+			dashboard.DegradedNodes++
+		}
+	}
+	return dashboard
+}
+
+func writePublicDashboard(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=5, stale-while-revalidate=15")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func coarsePercent(value float64) int {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return clampPercent(int(math.Round(value)))
+}
+
+func percentOf(used, total uint64) int {
+	if total == 0 {
+		return 0
+	}
+	return clampPercent(int(math.Round(float64(used) / float64(total) * 100)))
+}
+
+func publicDiskPercent(disks []model.DiskMetric) int {
+	if len(disks) == 0 {
+		return 0
+	}
+	return percentOf(disks[0].UsedBytes, disks[0].TotalBytes)
+}
+
+func clampPercent(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, session auth.Session) {

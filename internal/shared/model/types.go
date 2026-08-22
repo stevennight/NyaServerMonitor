@@ -118,3 +118,25 @@ type Dashboard struct {
 	RecentEvents    []AuditEvent `json:"recent_events"`
 	GeneratedAtUnix int64        `json:"generated_at_unix"`
 }
+
+// PublicDashboard deliberately contains only coarse, non-identifying status data.
+// Keep this separate from Dashboard so private fields cannot leak by accident.
+type PublicDashboard struct {
+	TotalNodes      int          `json:"total_nodes"`
+	OnlineNodes     int          `json:"online_nodes"`
+	OfflineNodes    int          `json:"offline_nodes"`
+	PendingNodes    int          `json:"pending_nodes"`
+	DegradedNodes   int          `json:"degraded_nodes"`
+	Nodes           []PublicNode `json:"nodes"`
+	GeneratedAtUnix int64        `json:"generated_at_unix"`
+}
+
+type PublicNode struct {
+	Name          string     `json:"name"`
+	Status        NodeStatus `json:"status"`
+	CPUPercent    int        `json:"cpu_percent"`
+	MemoryPercent int        `json:"memory_percent"`
+	DiskPercent   int        `json:"disk_percent"`
+	ChecksUp      int        `json:"checks_up"`
+	ChecksTotal   int        `json:"checks_total"`
+}
