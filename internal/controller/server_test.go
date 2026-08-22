@@ -119,6 +119,91 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	if privateResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("private dashboard should require auth, got %d", privateResponse.Code)
 	}
+	setupRequest := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(`{"username":"admin","password":"correct-horse-battery-staple"}`))
+	setupRequest.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(setupResponse, setupRequest)
+	if setupResponse.Code != http.StatusCreated {
+		t.Fatalf("setup status: %d %s", setupResponse.Code, setupResponse.Body.String())
+	}
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one session cookie, got %d", len(cookies))
+	}
+	privateRequest = httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	privateRequest.AddCookie(cookies[0])
+	privateResponse = httptest.NewRecorder()
+	s.mux.ServeHTTP(privateResponse, privateRequest)
+	if privateResponse.Code != http.StatusOK {
+		t.Fatalf("authenticated private dashboard status: %d %s", privateResponse.Code, privateResponse.Body.String())
+	}
+	privateBody := privateResponse.Body.String()
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host"} {
+		if !strings.Contains(privateBody, secret) {
+			t.Fatalf("authenticated private dashboard omitted %q: %s", secret, privateBody)
+		}
+	}
+}
+
+func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/auth.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+
+	protected := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/auth/logout"},
+		{http.MethodGet, "/api/me"},
+		{http.MethodPost, "/api/settings/totp/setup"},
+		{http.MethodPost, "/api/settings/totp/enable"},
+		{http.MethodPost, "/api/settings/totp/disable"},
+		{http.MethodGet, "/api/dashboard"},
+		{http.MethodGet, "/api/audit"},
+		{http.MethodGet, "/api/controller/info"},
+		{http.MethodGet, "/api/nodes"},
+		{http.MethodPost, "/api/nodes"},
+		{http.MethodGet, "/api/nodes/node_secret"},
+		{http.MethodGet, "/api/nodes/node_secret/metrics"},
+		{http.MethodPost, "/api/nodes/node_secret/rotate-token"},
+		{http.MethodPost, "/api/nodes/node_secret/revoke"},
+		{http.MethodPost, "/api/nodes/node_secret/restore"},
+	}
+	for _, endpoint := range protected {
+		request := httptest.NewRequest(endpoint.method, endpoint.path, nil)
+		response := httptest.NewRecorder()
+		s.mux.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s status: got %d, want %d (%s)", endpoint.method, endpoint.path, response.Code, http.StatusUnauthorized, response.Body.String())
+		}
+		for _, secret := range []string{"node_secret", "10.0.0.5", "private-host", "private-agent"} {
+			if strings.Contains(response.Body.String(), secret) {
+				t.Errorf("%s %s leaked %q: %s", endpoint.method, endpoint.path, secret, response.Body.String())
+			}
+		}
+	}
+
+	setupRequest := httptest.NewRequest(http.MethodGet, "/api/setup/status", nil)
+	setupResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(setupResponse, setupRequest)
+	if setupResponse.Code != http.StatusOK {
+		t.Fatalf("setup status: got %d", setupResponse.Code)
+	}
+	var setupBody map[string]json.RawMessage
+	if err := json.Unmarshal(setupResponse.Body.Bytes(), &setupBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(setupBody) != 1 {
+		t.Fatalf("setup status exposed unexpected fields: %s", setupResponse.Body.String())
+	}
+	if _, ok := setupBody["needs_setup"]; !ok {
+		t.Fatalf("setup status missing needs_setup: %s", setupResponse.Body.String())
+	}
 }
 
 func formatInt(value int64) string { return strconv.FormatInt(value, 10) }
