@@ -27,13 +27,13 @@ token 只在创建或轮换接口的响应中出现一次，节点列表、节�
 
 根页面可以在未登录时展示公开状态。公开接口使用独立的白名单响应结构，只返回节点名称、节点状态、粗粒度 CPU/内存/磁盘百分比和服务检查数量；不会返回节点 ID、IP、主机名、操作系统、内核、标签、分组、网络累计量、运行时间、探针版本、检查目标或审计事件。管理员登录后，根路径切换为私有监控首页，允许查看完整节点状态和敏感详情；节点创建、凭据轮换、撤销/恢复和审计位于 `/admin` 管理后台。
 
-未登录请求除以下明确的公开接口外不会得到私有数据：`GET /api/public/dashboard`、`GET /api/setup/status`、登录/首次初始化接口以及子节点的签名报告接口。`/api/dashboard`、`/api/nodes`、`/api/nodes/{id}`、指标、审计、控制器信息和 TOTP 接口均经过会话校验；未登录直接访问 `/admin` 也只返回静态登录界面，不触发私有 API 加载。
+未登录请求除以下明确的公开接口外不会得到私有数据：`GET /api/public/dashboard`、`GET /api/setup/status`、登录/首次初始化接口以及子节点的签名报告接口。`/api/dashboard`、`/api/nodes`、`/api/nodes/{id}`、指标、告警、通知渠道、审计、控制器信息和 TOTP 接口均经过会话校验；未登录直接访问 `/admin` 也只返回静态登录界面，不触发私有 API 加载。
 
 公开页的风险是信息泄露和可用性侦察，而不是权限提升：攻击者可以推断资产规模、节点命名和故障窗口，也可以抓取公开接口。公开接口只读、仅 GET、使用 5 秒服务端缓存并设置 `noindex`，但这不能阻止抓取。节点名称应按公开信息设计；不希望暴露状态时，应在反向代理、VPN 或防火墙层关闭公开入口。
 
 ## 子节点最小权限
 
-建议使用专用系统用户运行探针，并采用 `deploy/systemd/nyasm-node.service` 中的 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`。探针本身只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP 连接检查，不调用 shell 或外部命令。
+当前安装器暂时继续使用 root 运行探针，以保证进程信息完整并兼容 ICMP。探针仍采用 `deploy/systemd/nyasm-node.service` 中的 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`，只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP/ICMP/TLS 检查，不调用 shell 或外部命令。
 
 健康检查 JSON 由节点管理员本地维护。主节点管理员不能通过面板改变检查目标；这避免了主节点被接管后借探针向内网发起任意请求或执行命令的控制链路。若需要变更检查，请在目标机器上审查并修改本地文件后重启探针。
 
@@ -44,4 +44,6 @@ token 只在创建或轮换接口的响应中出现一次，节点列表、节�
 - 不要在公共网络直接暴露 SQLite、`/data` 或调试端口。
 - 管理员密码至少 12 个字符，初始化后启用 TOTP。
 - 日志中不打印 token、签名、报告 body 或健康检查响应体。
+- 告警通知目标和密钥使用 `NYASM_NOTIFICATION_KEY` 加密保存；Webhook 可配置签名密钥，Telegram Bot Token 不会返回 API 或页面。
+- 告警消息不进入公开首页；公开接口仍只返回粗粒度状态和检查数量。
 - 把 token 当作密码处理。若怀疑泄露，在面板轮换 token；若节点已不再可信，直接撤销。

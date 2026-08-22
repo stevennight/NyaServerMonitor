@@ -43,6 +43,7 @@ type Server struct {
 	store      *store.Store
 	sessions   *auth.Sessions
 	limiter    *auth.LoginLimiter
+	alerts     *alertEngine
 	mux        *http.ServeMux
 	nonces     *nonceCache
 	setupMu    sync.Mutex
@@ -90,6 +91,7 @@ func NewServer(cfg Config, st *store.Store) *Server {
 		mux:      http.NewServeMux(),
 		nonces:   newNonceCache(),
 	}
+	s.alerts = newAlertEngine(st, newSecretBox(cfg.NotificationKey), s.log)
 	s.routes()
 	return s
 }
@@ -152,6 +154,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/dashboard", s.withAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/audit", s.withAuth(s.handleAudit))
+	s.mux.HandleFunc("GET /api/alerts", s.withAuth(s.handleAlerts))
+	s.mux.HandleFunc("GET /api/alerts/events", s.withAuth(s.handleAlertEvents))
+	s.mux.HandleFunc("POST /api/alerts/rules", s.withAuth(s.handleCreateAlertRule))
+	s.mux.HandleFunc("PUT /api/alerts/rules/{id}", s.withAuth(s.handleUpdateAlertRule))
+	s.mux.HandleFunc("DELETE /api/alerts/rules/{id}", s.withAuth(s.handleDeleteAlertRule))
+	s.mux.HandleFunc("POST /api/alerts/channels", s.withAuth(s.handleCreateNotificationChannel))
+	s.mux.HandleFunc("DELETE /api/alerts/channels/{id}", s.withAuth(s.handleDeleteNotificationChannel))
 	s.mux.HandleFunc("GET /api/controller/info", s.withAuth(s.handleControllerInfo))
 	s.mux.HandleFunc("GET /api/nodes", s.withAuth(s.handleListNodes))
 	s.mux.HandleFunc("POST /api/nodes", s.withAuth(s.handleCreateNode))
@@ -177,6 +186,9 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 		case now := <-ticker.C:
 			if err := s.store.MarkOffline(ctx, now.Add(-s.cfg.OfflineAfter)); err != nil {
 				s.log.Warn("mark offline failed", "error", err)
+			}
+			if err := s.alerts.evaluateAll(ctx); err != nil {
+				s.log.Warn("evaluate offline alerts failed", "error", err)
 			}
 			if err := s.store.PruneMetrics(ctx, now.Add(-s.cfg.MetricsRetention)); err != nil {
 				s.log.Warn("prune metrics failed", "error", err)
@@ -391,7 +403,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session
 		writeError(w, http.StatusInternalServerError, "unable to load events")
 		return
 	}
-	dashboard := model.Dashboard{Nodes: nodes, RecentEvents: events, GeneratedAtUnix: time.Now().Unix()}
+	alertEvents, err := s.store.ListAlertEvents(r.Context(), 10)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert events")
+		return
+	}
+	activeAlerts, err := s.store.CountActiveAlerts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert state")
+		return
+	}
+	dashboard := model.Dashboard{Nodes: nodes, RecentEvents: events, RecentAlerts: alertEvents, ActiveAlerts: activeAlerts, GeneratedAtUnix: time.Now().Unix()}
 	for _, node := range nodes {
 		switch node.Status {
 		case model.NodeOnline:
@@ -525,6 +547,246 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, session aut
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	rules, err := s.store.ListAlertRules(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert rules")
+		return
+	}
+	channels, err := s.store.ListNotificationChannels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load notification channels")
+		return
+	}
+	events, err := s.store.ListAlertEvents(r.Context(), queryInt(r, "limit", 50, 1, 500))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert events")
+		return
+	}
+	active, err := s.store.CountActiveAlerts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert state")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules, "channels": channels, "events": events, "active_alerts": active, "notification_ready": s.alerts.box != nil})
+}
+
+func (s *Server) handleAlertEvents(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	events, err := s.store.ListAlertEvents(r.Context(), queryInt(r, "limit", 100, 1, 500))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load alert events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+type alertRuleRequest struct {
+	Name            string   `json:"name"`
+	Type            string   `json:"type"`
+	Enabled         *bool    `json:"enabled"`
+	Threshold       float64  `json:"threshold"`
+	DurationSeconds int      `json:"duration_seconds"`
+	CooldownSeconds int      `json:"cooldown_seconds"`
+	ChannelIDs      []string `json:"channel_ids,omitempty"`
+}
+
+func (s *Server) handleCreateAlertRule(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	var input alertRuleRequest
+	if err := decodeJSON(w, r, 8192, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rule, err := normalizeAlertRuleRequest(input, "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rule.ID, err = newOpaqueID("rule", 12)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to generate alert rule id")
+		return
+	}
+	if err := s.store.CreateAlertRule(r.Context(), rule); err != nil {
+		writeError(w, http.StatusConflict, "unable to create alert rule")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "alert_rule_created", rule.ID, map[string]any{"type": rule.Type})
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *Server) handleUpdateAlertRule(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	var input alertRuleRequest
+	if err := decodeJSON(w, r, 8192, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rule, err := normalizeAlertRuleRequest(input, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.UpdateAlertRule(r.Context(), rule); errors.Is(err, store.ErrAlertRuleNotFound) {
+		writeError(w, http.StatusNotFound, "alert rule not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to update alert rule")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "alert_rule_updated", rule.ID, map[string]any{"type": rule.Type})
+	writeJSON(w, http.StatusOK, rule)
+}
+
+func (s *Server) handleDeleteAlertRule(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	id := r.PathValue("id")
+	if !validate.Identifier(id) {
+		writeError(w, http.StatusBadRequest, "invalid alert rule id")
+		return
+	}
+	if err := s.store.DeleteAlertRule(r.Context(), id); errors.Is(err, store.ErrAlertRuleNotFound) {
+		writeError(w, http.StatusNotFound, "alert rule not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to delete alert rule")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "alert_rule_deleted", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCreateNotificationChannel(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	if s.alerts.box == nil {
+		writeError(w, http.StatusServiceUnavailable, "set NYASM_NOTIFICATION_KEY before creating notification channels")
+		return
+	}
+	var input struct {
+		Name   string `json:"name"`
+		Type   string `json:"type"`
+		Target string `json:"target"`
+		Secret string `json:"secret"`
+	}
+	if err := decodeJSON(w, r, 8192, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.Type = strings.TrimSpace(strings.ToLower(input.Type))
+	input.Target = strings.TrimSpace(input.Target)
+	if input.Name == "" || len(input.Name) > 128 {
+		writeError(w, http.StatusBadRequest, "invalid notification channel name")
+		return
+	}
+	if err := validateNotificationTarget(input.Type, input.Target, input.Secret); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	target, err := s.alerts.box.seal(input.Target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to encrypt notification target")
+		return
+	}
+	secret := ""
+	if input.Secret != "" {
+		secret, err = s.alerts.box.seal(input.Secret)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "unable to encrypt notification secret")
+			return
+		}
+	}
+	id, err := newOpaqueID("channel", 12)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to generate notification channel id")
+		return
+	}
+	channel := model.NotificationChannel{ID: id, Name: input.Name, Type: input.Type, Enabled: true, Target: "已配置的" + input.Type + "渠道"}
+	if err := s.store.CreateNotificationChannel(r.Context(), store.NotificationChannelRecord{Channel: channel, TargetCiphertext: target, SecretCiphertext: secret}); err != nil {
+		writeError(w, http.StatusConflict, "unable to create notification channel")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "notification_channel_created", id, map[string]any{"type": input.Type})
+	writeJSON(w, http.StatusCreated, channel)
+}
+
+func (s *Server) handleDeleteNotificationChannel(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	id := r.PathValue("id")
+	if !validate.Identifier(id) {
+		writeError(w, http.StatusBadRequest, "invalid notification channel id")
+		return
+	}
+	if err := s.store.DeleteNotificationChannel(r.Context(), id); errors.Is(err, store.ErrNotificationChannelNotFound) {
+		writeError(w, http.StatusNotFound, "notification channel not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to delete notification channel")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "notification_channel_deleted", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func normalizeAlertRuleRequest(input alertRuleRequest, id string) (model.AlertRule, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Type = strings.TrimSpace(strings.ToLower(input.Type))
+	if input.Name == "" || len(input.Name) > 128 {
+		return model.AlertRule{}, errors.New("alert rule name must be 1-128 characters")
+	}
+	if !validateAlertRuleType(input.Type) {
+		return model.AlertRule{}, errors.New("unsupported alert rule type")
+	}
+	if input.DurationSeconds < 0 || input.DurationSeconds > 7*24*60*60 || input.CooldownSeconds < 0 || input.CooldownSeconds > 30*24*60*60 {
+		return model.AlertRule{}, errors.New("invalid alert duration or cooldown")
+	}
+	if math.IsNaN(input.Threshold) || math.IsInf(input.Threshold, 0) {
+		return model.AlertRule{}, errors.New("invalid alert threshold")
+	}
+	switch input.Type {
+	case model.AlertCPUHigh, model.AlertMemoryHigh, model.AlertDiskHigh:
+		if input.Threshold <= 0 || input.Threshold > 100 {
+			return model.AlertRule{}, errors.New("resource threshold must be between 0 and 100")
+		}
+	case model.AlertLatencyHigh:
+		if input.Threshold <= 0 || input.Threshold > 24*60*60*1000 {
+			return model.AlertRule{}, errors.New("latency threshold is out of range")
+		}
+	case model.AlertPacketLossHigh:
+		if input.Threshold <= 0 || input.Threshold > 100 {
+			return model.AlertRule{}, errors.New("packet loss threshold must be between 0 and 100")
+		}
+	case model.AlertTLSExpiring:
+		if input.Threshold < time.Hour.Seconds() || input.Threshold > (365*24*time.Hour).Seconds() {
+			return model.AlertRule{}, errors.New("TLS expiration threshold is out of range")
+		}
+	default:
+		input.Threshold = 0
+	}
+	if len(input.ChannelIDs) > 16 {
+		return model.AlertRule{}, errors.New("too many notification channels")
+	}
+	seen := make(map[string]struct{}, len(input.ChannelIDs))
+	for _, channelID := range input.ChannelIDs {
+		if !validate.Identifier(channelID) {
+			return model.AlertRule{}, errors.New("invalid notification channel id")
+		}
+		if _, ok := seen[channelID]; ok {
+			return model.AlertRule{}, errors.New("duplicate notification channel id")
+		}
+		seen[channelID] = struct{}{}
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	return model.AlertRule{ID: id, Name: input.Name, Type: input.Type, Enabled: enabled, Threshold: input.Threshold, DurationSeconds: input.DurationSeconds, CooldownSeconds: input.CooldownSeconds, ChannelIDs: input.ChannelIDs}, nil
+}
+
+func validateAlertRuleType(value string) bool {
+	switch value {
+	case model.AlertNodeOffline, model.AlertServiceDown, model.AlertCPUHigh, model.AlertMemoryHigh, model.AlertDiskHigh, model.AlertLatencyHigh, model.AlertPacketLossHigh, model.AlertTLSExpiring, model.AlertTLSChanged, model.AlertTLSInvalid:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleControllerInfo(w http.ResponseWriter, r *http.Request, session auth.Session) {
@@ -732,6 +994,11 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to save report")
 		return
 	}
+	go func(nodeID string) {
+		if err := s.alerts.evaluateNode(context.Background(), nodeID); err != nil {
+			s.log.Warn("evaluate node alerts failed", "node_id", nodeID, "error", err)
+		}
+	}(report.NodeID)
 	// Deliberately return no configuration, command, URL, or shell content to the node.
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "server_time_unix": time.Now().Unix()})
 }
@@ -773,7 +1040,7 @@ func nodeCredentialResponse(cfg Config, node model.Node, token string) nodeCrede
 		InstallCommand:   installCommand(controllerURL, node.ID, token),
 		InstallScriptURL: installScriptURL(controllerURL),
 		BinaryURL:        nodeBinaryURL(controllerURL),
-		ChecksExample:    `[{"id":"homepage","name":"Homepage","type":"http","target":"https://example.com","timeout_seconds":5,"expected_status":200}]`,
+		ChecksExample:    `[{"id":"homepage","name":"Homepage","type":"http","target":"https://example.com","timeout_seconds":5,"expected_status":200},{"id":"gateway-ping","name":"Gateway ping","type":"ping","target":"1.1.1.1","timeout_seconds":2,"attempts":3},{"id":"certificate","name":"Public certificate","type":"tls","target":"https://example.com","timeout_seconds":5}]`,
 	}
 }
 

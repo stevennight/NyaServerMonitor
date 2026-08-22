@@ -2,6 +2,7 @@
 /node-data/
 /.tmp/
 /.gocache/
+/.gocache-*/
 /.gomodcache/
 /web/app/node_modules/
 /web/app/dist/

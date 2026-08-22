@@ -71,14 +71,19 @@ type NetworkMetric struct {
 }
 
 type ServiceCheck struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	Target        string `json:"target"`
-	Status        string `json:"status"`
-	LatencyMS     int64  `json:"latency_ms,omitempty"`
-	Message       string `json:"message,omitempty"`
-	CheckedAtUnix int64  `json:"checked_at_unix"`
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Type              string  `json:"type"`
+	Target            string  `json:"target"`
+	Status            string  `json:"status"`
+	LatencyMS         int64   `json:"latency_ms,omitempty"`
+	PacketLossPercent float64 `json:"packet_loss_percent,omitempty"`
+	Attempts          int     `json:"attempts,omitempty"`
+	TLSExpiresAtUnix  int64   `json:"tls_expires_at_unix,omitempty"`
+	TLSFingerprint    string  `json:"tls_fingerprint,omitempty"`
+	TLSVersion        string  `json:"tls_version,omitempty"`
+	Message           string  `json:"message,omitempty"`
+	CheckedAtUnix     int64   `json:"checked_at_unix"`
 }
 
 type Report struct {
@@ -114,9 +119,72 @@ type Dashboard struct {
 	OfflineNodes    int          `json:"offline_nodes"`
 	RevokedNodes    int          `json:"revoked_nodes"`
 	DegradedChecks  int          `json:"degraded_checks"`
+	ActiveAlerts    int          `json:"active_alerts"`
 	Nodes           []Node       `json:"nodes"`
 	RecentEvents    []AuditEvent `json:"recent_events"`
+	RecentAlerts    []AlertEvent `json:"recent_alerts"`
 	GeneratedAtUnix int64        `json:"generated_at_unix"`
+}
+
+const (
+	AlertNodeOffline    = "node_offline"
+	AlertServiceDown    = "service_down"
+	AlertCPUHigh        = "cpu_high"
+	AlertMemoryHigh     = "memory_high"
+	AlertDiskHigh       = "disk_high"
+	AlertLatencyHigh    = "latency_high"
+	AlertPacketLossHigh = "packet_loss_high"
+	AlertTLSExpiring    = "tls_expiring"
+	AlertTLSChanged     = "tls_changed"
+	AlertTLSInvalid     = "tls_invalid"
+)
+
+type AlertRule struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Type            string    `json:"type"`
+	Enabled         bool      `json:"enabled"`
+	Threshold       float64   `json:"threshold"`
+	DurationSeconds int       `json:"duration_seconds"`
+	CooldownSeconds int       `json:"cooldown_seconds"`
+	ChannelIDs      []string  `json:"channel_ids,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type NotificationChannel struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Enabled   bool      `json:"enabled"`
+	Target    string    `json:"target"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AlertState struct {
+	RuleID           string    `json:"rule_id"`
+	NodeID           string    `json:"node_id"`
+	Status           string    `json:"status"`
+	Value            float64   `json:"value,omitempty"`
+	Message          string    `json:"message,omitempty"`
+	Fingerprint      string    `json:"-"`
+	FirstTriggeredAt time.Time `json:"first_triggered_at,omitempty"`
+	LastEvaluatedAt  time.Time `json:"last_evaluated_at"`
+	LastNotifiedAt   time.Time `json:"last_notified_at,omitempty"`
+}
+
+type AlertEvent struct {
+	ID        int64     `json:"id"`
+	RuleID    string    `json:"rule_id"`
+	RuleName  string    `json:"rule_name"`
+	NodeID    string    `json:"node_id"`
+	NodeName  string    `json:"node_name"`
+	Kind      string    `json:"kind"`
+	Value     float64   `json:"value,omitempty"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+	Notified  bool      `json:"notified"`
 }
 
 // PublicDashboard deliberately contains only coarse, non-identifying status data.

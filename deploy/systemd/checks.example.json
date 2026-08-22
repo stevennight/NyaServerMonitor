@@ -6,5 +6,20 @@
     "target": "https://example.com",
     "timeout_seconds": 5,
     "expected_status": 200
+  },
+  {
+    "id": "gateway-ping",
+    "name": "Gateway ping",
+    "type": "ping",
+    "target": "1.1.1.1",
+    "timeout_seconds": 2,
+    "attempts": 3
+  },
+  {
+    "id": "certificate",
+    "name": "Public certificate",
+    "type": "tls",
+    "target": "https://example.com",
+    "timeout_seconds": 5
   }
 ]

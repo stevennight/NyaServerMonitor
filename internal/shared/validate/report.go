@@ -51,7 +51,7 @@ func Report(report model.Report, now time.Time) error {
 			return fmt.Errorf("duplicate service check id %q", check.ID)
 		}
 		seenChecks[check.ID] = struct{}{}
-		if check.Type != "http" && check.Type != "tcp" {
+		if check.Type != "http" && check.Type != "tcp" && check.Type != "ping" && check.Type != "tls" {
 			return fmt.Errorf("unsupported service check type %q", check.Type)
 		}
 		if len(check.Target) == 0 || len(check.Target) > 512 {
@@ -62,6 +62,18 @@ func Report(report model.Report, now time.Time) error {
 		}
 		if check.LatencyMS < 0 || check.LatencyMS > 24*60*60*1000 {
 			return fmt.Errorf("invalid service check latency")
+		}
+		if check.PacketLossPercent < 0 || math.IsNaN(check.PacketLossPercent) || math.IsInf(check.PacketLossPercent, 0) || check.PacketLossPercent > 100 {
+			return fmt.Errorf("invalid service check packet loss")
+		}
+		if check.Attempts < 0 || check.Attempts > 10 {
+			return fmt.Errorf("invalid service check attempts")
+		}
+		if len(check.TLSFingerprint) > 64 || len(check.TLSVersion) > 32 {
+			return fmt.Errorf("invalid TLS metadata")
+		}
+		if check.TLSExpiresAtUnix < 0 {
+			return fmt.Errorf("invalid TLS expiration")
 		}
 		if check.Message != "" && len(check.Message) > 256 {
 			return fmt.Errorf("service check message is too long")

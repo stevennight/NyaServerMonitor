@@ -18,11 +18,11 @@
 初版已包含：
 
 - CPU 使用率、系统负载、内存、Swap、磁盘根分区、网络接口、运行时间、进程数。
-- 子节点本地 HTTP/TCP 健康检查及延迟、状态、错误摘要。
+- 子节点本地 HTTP、TCP、ICMP ping、TLS 健康检查及延迟、丢包率、证书到期时间和错误摘要。
 - 节点注册、一次性 token 展示、token 轮换、撤销、恢复、在线/离线判断。
 - HMAC 请求签名、时间窗口、nonce 防重放、凭据哈希存储、严格 JSON 白名单和报告大小限制。
 - 管理员 PBKDF2 密码哈希、登录限速、可选 TOTP、审计日志。
-- SQLite 指标历史、自动清理和嵌入式中文面板。
+- SQLite 指标历史、自动清理、时间桶降采样、活动告警和嵌入式中文面板。
 
 ## 本地运行
 
@@ -46,11 +46,11 @@ go run ./cmd/node
 
 安装命令只在管理员登录后的创建/凭据轮换响应中出现。`/install.sh` 和 `/downloads/nyasm-node` 是公开下载端点，但不包含任何节点 token；生产环境必须使用 HTTPS。controller 默认从 `/usr/local/bin/nyasm-node` 提供 node 二进制，非 Docker 部署可通过 `NYASM_NODE_BINARY` 或 `--node-binary` 指定路径，也可通过 `NYASM_NODE_BINARY_DIR` 配置 `nyasm-node-linux-amd64` 和 `nyasm-node-linux-arm64` 多架构文件。
 
-生产环境应使用 HTTPS。HTTP 只适合本机开发；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。
+生产环境应使用 HTTPS。HTTP 只适合本机开发；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。探针安装脚本当前仍以 root 安装并运行 systemd 服务，这是为了完整读取进程信息并使用 ICMP；服务没有远程执行能力，且保留了 systemd 文件系统和权限限制。
 
 首页默认是公开状态页，不要求登录。公开页只展示管理员配置的节点名称、在线/离线状态、CPU/内存/磁盘百分比和服务检查汇总，不展示 IP、主机名、系统版本、标签分组、网络流量、运行时间、探针版本、检查目标或节点 ID。管理员登录后，根路径仍然是监控首页，会显示完整节点状态、IP 和详细指标；节点创建、凭据轮换、撤销/恢复及审计日志位于 `/admin` 管理后台。
 
-未登录状态下成功返回的数据只有公开状态和初始化状态。除 `GET /api/public/dashboard`、`GET /api/setup/status`、登录/初始化及子节点报告接口外，所有 API 都要求管理员会话；直接访问 `/admin` 未登录时只显示登录表单，不加载私有数据。
+未登录状态下成功返回的数据只有公开状态和初始化状态。除 `GET /api/public/dashboard`、`GET /api/setup/status`、登录/初始化及子节点报告接口外，所有 API（包括指标、告警和通知渠道接口）都要求管理员会话；直接访问 `/admin` 未登录时只显示登录表单，不加载私有数据。
 
 公开状态页仍会暴露资产数量、节点名称和可用性，节点名称不要包含域名、IP、机房、业务密钥或其他内部信息。若监控面板不应被互联网访问，应在反向代理、VPN 或防火墙层限制访问；公开页的 `noindex` 和短缓存不能替代访问控制。
 
@@ -72,11 +72,32 @@ go run ./cmd/node
     "type": "tcp",
     "target": "127.0.0.1:5432",
     "timeout_seconds": 3
+  },
+  {
+    "id": "gateway-ping",
+    "name": "Gateway ping",
+    "type": "ping",
+    "target": "1.1.1.1",
+    "timeout_seconds": 2,
+    "attempts": 3
+  },
+  {
+    "id": "certificate",
+    "name": "Public certificate",
+    "type": "tls",
+    "target": "https://example.com",
+    "timeout_seconds": 5
   }
 ]
 ```
 
-探针只支持 `http` 和 `tcp`，不会执行命令，不会解析或执行检查配置中的脚本。
+探针支持 `http`、`tcp`、`ping` 和 `tls`，不会执行命令，不会解析或执行检查配置中的脚本。`ping` 使用 ICMP echo，默认 3 次并统计丢包率；非 root 用户需要系统允许非特权 ICMP（例如 Linux 的 `net.ipv4.ping_group_range`），否则该检查会报告为不可用。`tls` 会执行 TLS 握手并记录证书指纹、到期时间和版本，不上传证书内容。
+
+告警规则在管理后台的“告警管理”中维护。默认包含节点离线、服务失败、CPU/内存/磁盘阈值、延迟、丢包和 TLS 证书告警。通知渠道的目标和密钥使用 `NYASM_NOTIFICATION_KEY` 加密保存；未配置该变量时仍会记录告警事件，但不能创建通知渠道。
+
+## 数据库选择
+
+当前 controller 使用 SQLite，数据库位于数据目录中的 `nyasm.db`，并通过单写连接、忙等待、指标保留策略和时间桶降采样控制并发与查询返回量。对于单实例、自有服务器监控和几十到数百个节点，这比额外维护 PostgreSQL 更简单可靠。只有在需要 controller 多副本、多个写入进程、很高的指标写入量或集中式数据库运维时，才建议迁移 PostgreSQL；当前数据访问集中在 `internal/controller/store`，后续可以替换存储实现。
 
 ## Docker 主节点
 
