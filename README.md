@@ -33,7 +33,7 @@ $env:GOCACHE = "D:\Projects\Self\Software\NyaServerMonitor\.gocache"
 go run ./cmd/controller --listen :8080 --data ./data
 ```
 
-访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应会提供一次性安装命令；在目标 Linux 节点上以 sudo-capable 用户执行即可自动下载探针、写入配置、安装 systemd 服务并启动。已有节点需要轮换 token 后重新生成安装命令。
+访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应会提供一次性安装命令；在目标 Linux 节点上以 sudo-capable 用户执行即可自动下载探针、写入配置、安装 systemd 服务并启动。已有节点可在节点详情点击“生成安装命令”，该操作会轮换 token 后重新生成命令。
 
 也可以使用创建响应中的环境文件手动部署：
 
