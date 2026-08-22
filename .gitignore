@@ -1,0 +1,8 @@
+/data/
+/node-data/
+/.tmp/
+/.gocache/
+/.gomodcache/
+/web/app/node_modules/
+/web/app/dist/
+*.exe

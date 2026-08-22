@@ -1,0 +1,19 @@
+services:
+  controller:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ${NYASM_IMAGE:-nyaservermonitor}:${NYASM_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      NYASM_LISTEN: ":8080"
+      NYASM_DATA: /data
+      NYASM_PUBLIC_URL: ${NYASM_PUBLIC_URL:?set NYASM_PUBLIC_URL in deploy/docker/.env}
+      NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
+    volumes:
+      - nyasm-data:/data
+    ports:
+      - "${NYASM_BIND_ADDR:-127.0.0.1}:${NYASM_HOST_PORT:-8080}:8080"
+
+volumes:
+  nyasm-data:

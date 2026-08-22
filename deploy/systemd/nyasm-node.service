@@ -1,0 +1,19 @@
+[Unit]
+Description=NyaServerMonitor node agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/nyasm/node.env
+ExecStart=/usr/local/bin/nyasm-node
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nyasm
+
+[Install]
+WantedBy=multi-user.target
