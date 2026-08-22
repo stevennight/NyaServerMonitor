@@ -9,6 +9,7 @@ services:
       NYASM_LISTEN: ":8080"
       NYASM_DATA: /data
       NYASM_PUBLIC_URL: ${NYASM_PUBLIC_URL:?set NYASM_PUBLIC_URL in deploy/docker/.env}
+      NYASM_NODE_BINARY: /usr/local/bin/nyasm-node
       NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
     volumes:
       - nyasm-data:/data

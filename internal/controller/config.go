@@ -14,6 +14,8 @@ type Config struct {
 	DataDir          string
 	DBPath           string
 	PublicURL        string
+	NodeBinaryPath   string
+	NodeBinaryDir    string
 	LogLevel         string
 	SessionLifetime  time.Duration
 	OfflineAfter     time.Duration
@@ -27,6 +29,8 @@ func parseConfig(args []string) (Config, error) {
 		ListenAddr:       env("NYASM_LISTEN", ":8080"),
 		DataDir:          env("NYASM_DATA", "./data"),
 		PublicURL:        env("NYASM_PUBLIC_URL", "http://127.0.0.1:8080"),
+		NodeBinaryPath:   env("NYASM_NODE_BINARY", ""),
+		NodeBinaryDir:    env("NYASM_NODE_BINARY_DIR", ""),
 		LogLevel:         env("NYASM_LOG_LEVEL", "info"),
 		SessionLifetime:  24 * time.Hour,
 		OfflineAfter:     90 * time.Second,
@@ -37,6 +41,8 @@ func parseConfig(args []string) (Config, error) {
 	flags.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
 	flags.StringVar(&cfg.DataDir, "data", cfg.DataDir, "data directory")
 	flags.StringVar(&cfg.PublicURL, "public-url", cfg.PublicURL, "URL used in node configuration")
+	flags.StringVar(&cfg.NodeBinaryPath, "node-binary", cfg.NodeBinaryPath, "path to the node binary served by the installer")
+	flags.StringVar(&cfg.NodeBinaryDir, "node-binary-dir", cfg.NodeBinaryDir, "directory containing target node binaries")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level")
 	flags.DurationVar(&cfg.SessionLifetime, "session-lifetime", cfg.SessionLifetime, "admin session lifetime")
 	flags.DurationVar(&cfg.OfflineAfter, "offline-after", cfg.OfflineAfter, "time without a report before a node is offline")

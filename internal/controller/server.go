@@ -160,6 +160,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/nodes/{id}/rotate-token", s.withAuth(s.handleRotateToken))
 	s.mux.HandleFunc("POST /api/nodes/{id}/revoke", s.withAuth(s.handleRevokeNode))
 	s.mux.HandleFunc("POST /api/nodes/{id}/restore", s.withAuth(s.handleRestoreNode))
+	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	s.mux.HandleFunc("GET /downloads/nyasm-node", s.handleDownloadNodeBinary)
 	// This is the only public node endpoint. It accepts reports and has no response data channel.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)
 	s.mux.HandleFunc("/", s.handleSPA)
@@ -750,16 +752,29 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 }
 
 type nodeCredential struct {
-	Node          model.Node `json:"node"`
-	Token         string     `json:"token"`
-	ControllerURL string     `json:"controller_url"`
-	Env           string     `json:"env"`
-	ChecksExample string     `json:"checks_example"`
+	Node             model.Node `json:"node"`
+	Token            string     `json:"token"`
+	ControllerURL    string     `json:"controller_url"`
+	Env              string     `json:"env"`
+	InstallCommand   string     `json:"install_command,omitempty"`
+	InstallScriptURL string     `json:"install_script_url,omitempty"`
+	BinaryURL        string     `json:"binary_url,omitempty"`
+	ChecksExample    string     `json:"checks_example"`
 }
 
 func nodeCredentialResponse(cfg Config, node model.Node, token string) nodeCredential {
-	envText := fmt.Sprintf("NYASM_CONTROLLER=%s\nNYASM_NODE_ID=%s\nNYASM_NODE_TOKEN=%s\nNYASM_DATA=/var/lib/nyasm\nNYASM_CHECKS=/etc/nyasm/checks.json\n", cfg.PublicURL, node.ID, token)
-	return nodeCredential{Node: node, Token: token, ControllerURL: cfg.PublicURL, Env: envText, ChecksExample: `[{"id":"homepage","name":"Homepage","type":"http","target":"https://example.com","timeout_seconds":5,"expected_status":200}]`}
+	controllerURL := strings.TrimRight(cfg.PublicURL, "/")
+	envText := fmt.Sprintf("NYASM_CONTROLLER=%s\nNYASM_NODE_ID=%s\nNYASM_NODE_TOKEN=%s\nNYASM_DATA=/var/lib/nyasm\nNYASM_CHECKS=/etc/nyasm/checks.json\n", controllerURL, node.ID, token)
+	return nodeCredential{
+		Node:             node,
+		Token:            token,
+		ControllerURL:    controllerURL,
+		Env:              envText,
+		InstallCommand:   installCommand(controllerURL, node.ID, token),
+		InstallScriptURL: installScriptURL(controllerURL),
+		BinaryURL:        nodeBinaryURL(controllerURL),
+		ChecksExample:    `[{"id":"homepage","name":"Homepage","type":"http","target":"https://example.com","timeout_seconds":5,"expected_status":200}]`,
+	}
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {

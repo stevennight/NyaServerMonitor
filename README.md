@@ -33,7 +33,9 @@ $env:GOCACHE = "D:\Projects\Self\Software\NyaServerMonitor\.gocache"
 go run ./cmd/controller --listen :8080 --data ./data
 ```
 
-访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应中的环境文件只展示本次 token；把它写入探针机器后运行：
+访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应会提供一次性安装命令；在目标 Linux 节点上以 sudo-capable 用户执行即可自动下载探针、写入配置、安装 systemd 服务并启动。已有节点需要轮换 token 后重新生成安装命令。
+
+也可以使用创建响应中的环境文件手动部署：
 
 ```powershell
 $env:NYASM_CONTROLLER = "http://127.0.0.1:8080"
@@ -41,6 +43,8 @@ $env:NYASM_NODE_ID = "node_xxx"
 $env:NYASM_NODE_TOKEN = "<一次性 token>"
 go run ./cmd/node
 ```
+
+安装命令只在管理员登录后的创建/凭据轮换响应中出现。`/install.sh` 和 `/downloads/nyasm-node` 是公开下载端点，但不包含任何节点 token；生产环境必须使用 HTTPS。controller 默认从 `/usr/local/bin/nyasm-node` 提供 node 二进制，非 Docker 部署可通过 `NYASM_NODE_BINARY` 或 `--node-binary` 指定路径，也可通过 `NYASM_NODE_BINARY_DIR` 配置 `nyasm-node-linux-amd64` 和 `nyasm-node-linux-arm64` 多架构文件。
 
 生产环境应使用 HTTPS。HTTP 只适合本机开发；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。
 

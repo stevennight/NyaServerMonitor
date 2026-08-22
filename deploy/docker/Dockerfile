@@ -18,4 +18,5 @@ WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 8080
 ENV NYASM_DATA=/data
+ENV NYASM_NODE_BINARY=/usr/local/bin/nyasm-node
 ENTRYPOINT ["/usr/local/bin/nyasm-controller"]
