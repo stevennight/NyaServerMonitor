@@ -170,6 +170,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/settings/totp/disable", s.withAuth(s.handleTOTPDisable))
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/public/nodes/{id}/metrics", s.handlePublicNodeMetrics)
+	s.mux.HandleFunc("GET /api/public/telemetry/stream", s.handlePublicTelemetryStream)
 	s.mux.HandleFunc("GET /api/dashboard", s.withAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/telemetry/stream", s.withAuth(s.handleTelemetryStream))
 	s.mux.HandleFunc("GET /api/audit", s.withAuth(s.handleAudit))

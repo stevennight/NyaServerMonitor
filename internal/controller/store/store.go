@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +47,20 @@ type NotificationChannelRecord struct {
 type Store struct {
 	db *sql.DB
 }
+
+type metricBucketTier struct {
+	seconds   int64
+	retention time.Duration
+}
+
+var metricBucketTiers = []metricBucketTier{
+	{seconds: 60, retention: 6 * time.Hour},
+	{seconds: 5 * 60, retention: 24 * time.Hour},
+	{seconds: 30 * 60, retention: 7 * 24 * time.Hour},
+	{seconds: 2 * 60 * 60, retention: 30 * 24 * time.Hour},
+}
+
+const legacyMetricBatchSize = 1000
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -121,6 +134,26 @@ func (s *Store) migrate(ctx context.Context) error {
 			snapshot_json TEXT NOT NULL,
 			checks_json TEXT NOT NULL DEFAULT '[]'
 		);`,
+		`CREATE TABLE IF NOT EXISTS metric_buckets (
+			node_id TEXT NOT NULL,
+			resolution_seconds INTEGER NOT NULL,
+			bucket_start INTEGER NOT NULL,
+			observed_at TEXT NOT NULL,
+			sequence INTEGER NOT NULL DEFAULT 0,
+			sample_count INTEGER NOT NULL DEFAULT 1,
+			cpu_sum REAL NOT NULL DEFAULT 0,
+			load1_sum REAL NOT NULL DEFAULT 0,
+			load5_sum REAL NOT NULL DEFAULT 0,
+			load15_sum REAL NOT NULL DEFAULT 0,
+			memory_total_sum REAL NOT NULL DEFAULT 0,
+			memory_used_sum REAL NOT NULL DEFAULT 0,
+			swap_total_sum REAL NOT NULL DEFAULT 0,
+			swap_used_sum REAL NOT NULL DEFAULT 0,
+			process_count_sum REAL NOT NULL DEFAULT 0,
+			snapshot_json TEXT NOT NULL,
+			checks_json TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY (node_id, resolution_seconds, bucket_start)
+		);`,
 		`CREATE TABLE IF NOT EXISTS audit (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			actor TEXT NOT NULL,
@@ -185,6 +218,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_node_time ON metric_samples(node_id, observed_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_bucket_node_time ON metric_buckets(node_id, resolution_seconds, bucket_start);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_events_time ON alert_events(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_states_status ON alert_states(status);`,
@@ -195,6 +229,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	if err := s.ensureNodeColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.compactLegacyMetrics(ctx); err != nil {
 		return err
 	}
 	if err := s.seedAlertRules(ctx); err != nil {
@@ -457,7 +494,8 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report, remoteIP 
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
+	nowText := now.Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -470,7 +508,7 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report, remoteIP 
 		first_seen = CASE WHEN first_seen = '' THEN ? ELSE first_seen END,
 		updated_at = ?, sequence = ?, system_json = ?, last_report_json = ?
 		WHERE id = ? AND revoked = 0`,
-		model.NodeOnline, report.AgentVersion, remoteIP, now, remoteIP, remoteIP, now, now, report.Sequence,
+		model.NodeOnline, report.AgentVersion, remoteIP, nowText, remoteIP, remoteIP, nowText, nowText, report.Sequence,
 		string(systemJSON), string(reportJSON), report.NodeID)
 	if err != nil {
 		return err
@@ -482,12 +520,118 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report, remoteIP 
 	if affected == 0 {
 		return s.nodeUpdateError(ctx, tx, report.NodeID)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO metric_samples (node_id, observed_at, sequence, snapshot_json, checks_json)
-		VALUES (?, ?, ?, ?, ?)`, report.NodeID, now, report.Sequence, string(snapshotJSON), string(checksJSON)); err != nil {
+	if err := upsertMetricBuckets(ctx, tx, report.NodeID, now, report.Sequence, report.Metrics, snapshotJSON, checksJSON); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func upsertMetricBuckets(ctx context.Context, tx *sql.Tx, nodeID string, observedAt time.Time, sequence uint64, snapshot model.MetricsSnapshot, snapshotJSON, checksJSON []byte) error {
+	for _, tier := range metricBucketTiers {
+		bucketStart := observedAt.Unix() / tier.seconds * tier.seconds
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO metric_buckets (
+				node_id, resolution_seconds, bucket_start, observed_at, sequence, sample_count,
+				cpu_sum, load1_sum, load5_sum, load15_sum,
+				memory_total_sum, memory_used_sum, swap_total_sum, swap_used_sum, process_count_sum,
+				snapshot_json, checks_json
+			) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(node_id, resolution_seconds, bucket_start) DO UPDATE SET
+				observed_at = excluded.observed_at,
+				sequence = excluded.sequence,
+				sample_count = metric_buckets.sample_count + excluded.sample_count,
+				cpu_sum = metric_buckets.cpu_sum + excluded.cpu_sum,
+				load1_sum = metric_buckets.load1_sum + excluded.load1_sum,
+				load5_sum = metric_buckets.load5_sum + excluded.load5_sum,
+				load15_sum = metric_buckets.load15_sum + excluded.load15_sum,
+				memory_total_sum = metric_buckets.memory_total_sum + excluded.memory_total_sum,
+				memory_used_sum = metric_buckets.memory_used_sum + excluded.memory_used_sum,
+				swap_total_sum = metric_buckets.swap_total_sum + excluded.swap_total_sum,
+				swap_used_sum = metric_buckets.swap_used_sum + excluded.swap_used_sum,
+				process_count_sum = metric_buckets.process_count_sum + excluded.process_count_sum,
+				snapshot_json = excluded.snapshot_json,
+				checks_json = excluded.checks_json`,
+			nodeID, tier.seconds, bucketStart, formatTime(observedAt), sequence,
+			snapshot.CPUPercent, snapshot.Load1, snapshot.Load5, snapshot.Load15,
+			float64(snapshot.MemoryTotalBytes), float64(snapshot.MemoryUsedBytes),
+			float64(snapshot.SwapTotalBytes), float64(snapshot.SwapUsedBytes), float64(snapshot.ProcessCount),
+			string(snapshotJSON), string(checksJSON))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) compactLegacyMetrics(ctx context.Context) error {
+	for {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT id, node_id, observed_at, sequence, snapshot_json, checks_json
+			FROM metric_samples ORDER BY id LIMIT ?`, legacyMetricBatchSize)
+		if err != nil {
+			return err
+		}
+		type legacyMetric struct {
+			id           int64
+			nodeID       string
+			observedAt   time.Time
+			sequence     uint64
+			snapshotJSON string
+			checksJSON   string
+		}
+		batch := make([]legacyMetric, 0, legacyMetricBatchSize)
+		for rows.Next() {
+			var item legacyMetric
+			var observed string
+			if err := rows.Scan(&item.id, &item.nodeID, &observed, &item.sequence, &item.snapshotJSON, &item.checksJSON); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			item.observedAt = parseTime(observed)
+			if item.observedAt.IsZero() {
+				_ = rows.Close()
+				return fmt.Errorf("invalid legacy metric timestamp for row %d", item.id)
+			}
+			batch = append(batch, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_ = rows.Close()
+		if len(batch) == 0 {
+			return nil
+		}
+
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		for _, item := range batch {
+			var snapshot model.MetricsSnapshot
+			if err := json.Unmarshal([]byte(item.snapshotJSON), &snapshot); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+			var checks []model.ServiceCheck
+			if err := json.Unmarshal([]byte(item.checksJSON), &checks); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+			if err := upsertMetricBuckets(ctx, tx, item.nodeID, item.observedAt, item.sequence, snapshot, []byte(item.snapshotJSON), []byte(item.checksJSON)); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		lastID := batch[len(batch)-1].id
+		if _, err := tx.ExecContext(ctx, `DELETE FROM metric_samples WHERE id <= ?`, lastID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 }
 
 func (s *Store) ClaimCountryLookup(ctx context.Context, id, ip string) (bool, error) {
@@ -663,6 +807,32 @@ func (s *Store) MarkOffline(ctx context.Context, before time.Time) error {
 	return err
 }
 
+func metricResolutionFor(since, now time.Time, limit int) int64 {
+	duration := now.Sub(since)
+	if duration <= 0 {
+		duration = 24 * time.Hour
+	}
+	for _, tier := range metricBucketTiers {
+		// Handlers calculate since and now in separate calls. Allow one bucket of
+		// skew so an exact retention-range request does not jump to the next tier.
+		if duration > tier.retention+time.Duration(tier.seconds)*time.Second {
+			continue
+		}
+		estimated := int64(duration / (time.Duration(tier.seconds) * time.Second))
+		if estimated < 1 {
+			estimated = 1
+		}
+		if estimated <= int64(limit) {
+			return tier.seconds
+		}
+	}
+	return metricBucketTiers[len(metricBucketTiers)-1].seconds
+}
+
+func metricBucketStart(at time.Time, resolutionSeconds int64) int64 {
+	return at.Unix() / resolutionSeconds * resolutionSeconds
+}
+
 func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time, limit int) ([]model.MetricSample, error) {
 	if limit < 1 {
 		limit = 1
@@ -674,37 +844,31 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 	if since.IsZero() || since.After(now) {
 		since = now.Add(-24 * time.Hour)
 	}
-	bucketWidth := now.Sub(since) / time.Duration(limit)
-	if bucketWidth < time.Second {
-		bucketWidth = time.Second
-	}
+	resolution := metricResolutionFor(since, now, limit)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT observed_at, sequence, snapshot_json, checks_json
-		FROM metric_samples WHERE node_id = ? AND observed_at >= ?
-		ORDER BY observed_at ASC`, nodeID, since.UTC().Format(time.RFC3339Nano))
+		SELECT observed_at, sequence, sample_count,
+		       cpu_sum, load1_sum, load5_sum, load15_sum,
+		       memory_total_sum, memory_used_sum, swap_total_sum, swap_used_sum, process_count_sum,
+		       snapshot_json, checks_json
+		FROM metric_buckets
+		WHERE node_id = ? AND resolution_seconds = ? AND bucket_start >= ?
+		ORDER BY bucket_start ASC`, nodeID, resolution, metricBucketStart(since, resolution))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type metricBucket struct {
-		sample       model.MetricSample
-		count        int
-		cpu          float64
-		load1        float64
-		load5        float64
-		load15       float64
-		memoryTotal  float64
-		memoryUsed   float64
-		swapTotal    float64
-		swapUsed     float64
-		processCount float64
-	}
-	buckets := make(map[int64]*metricBucket)
+	samples := make([]model.MetricSample, 0)
 	for rows.Next() {
 		var observed, snapshotJSON, checksJSON string
-		var sequence uint64
-		if err := rows.Scan(&observed, &sequence, &snapshotJSON, &checksJSON); err != nil {
+		var sequence, sampleCount int64
+		var cpu, load1, load5, load15 float64
+		var memoryTotal, memoryUsed, swapTotal, swapUsed, processCount float64
+		if err := rows.Scan(&observed, &sequence, &sampleCount, &cpu, &load1, &load5, &load15,
+			&memoryTotal, &memoryUsed, &swapTotal, &swapUsed, &processCount, &snapshotJSON, &checksJSON); err != nil {
 			return nil, err
+		}
+		if sampleCount < 1 {
+			continue
 		}
 		var snapshot model.MetricsSnapshot
 		var checks []model.ServiceCheck
@@ -718,53 +882,20 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 		if observedAt.IsZero() {
 			continue
 		}
-		bucketID := int64(observedAt.Sub(since) / bucketWidth)
-		bucket, exists := buckets[bucketID]
-		if !exists {
-			bucket = &metricBucket{sample: model.MetricSample{ObservedAt: observedAt, Sequence: sequence, Metrics: snapshot, Checks: checks}}
-			buckets[bucketID] = bucket
-		}
-		bucket.count++
-		bucket.cpu += snapshot.CPUPercent
-		bucket.load1 += snapshot.Load1
-		bucket.load5 += snapshot.Load5
-		bucket.load15 += snapshot.Load15
-		bucket.memoryTotal += float64(snapshot.MemoryTotalBytes)
-		bucket.memoryUsed += float64(snapshot.MemoryUsedBytes)
-		bucket.swapTotal += float64(snapshot.SwapTotalBytes)
-		bucket.swapUsed += float64(snapshot.SwapUsedBytes)
-		bucket.processCount += float64(snapshot.ProcessCount)
-		bucket.sample.ObservedAt = observedAt
-		bucket.sample.Sequence = sequence
-		bucket.sample.Metrics.Disks = snapshot.Disks
-		bucket.sample.Metrics.Networks = snapshot.Networks
-		bucket.sample.Metrics.UptimeSeconds = snapshot.UptimeSeconds
-		bucket.sample.Checks = checks
+		count := float64(sampleCount)
+		snapshot.CPUPercent = cpu / count
+		snapshot.Load1 = load1 / count
+		snapshot.Load5 = load5 / count
+		snapshot.Load15 = load15 / count
+		snapshot.MemoryTotalBytes = uint64(memoryTotal / count)
+		snapshot.MemoryUsedBytes = uint64(memoryUsed / count)
+		snapshot.SwapTotalBytes = uint64(swapTotal / count)
+		snapshot.SwapUsedBytes = uint64(swapUsed / count)
+		snapshot.ProcessCount = int(processCount / count)
+		samples = append(samples, model.MetricSample{ObservedAt: observedAt, Sequence: uint64(sequence), Metrics: snapshot, Checks: checks})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	keys := make([]int64, 0, len(buckets))
-	for key := range buckets {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
-	samples := make([]model.MetricSample, 0, len(keys))
-	for _, key := range keys {
-		bucket := buckets[key]
-		if bucket.count > 1 {
-			count := float64(bucket.count)
-			bucket.sample.Metrics.CPUPercent = bucket.cpu / count
-			bucket.sample.Metrics.Load1 = bucket.load1 / count
-			bucket.sample.Metrics.Load5 = bucket.load5 / count
-			bucket.sample.Metrics.Load15 = bucket.load15 / count
-			bucket.sample.Metrics.MemoryTotalBytes = uint64(bucket.memoryTotal / count)
-			bucket.sample.Metrics.MemoryUsedBytes = uint64(bucket.memoryUsed / count)
-			bucket.sample.Metrics.SwapTotalBytes = uint64(bucket.swapTotal / count)
-			bucket.sample.Metrics.SwapUsedBytes = uint64(bucket.swapUsed / count)
-			bucket.sample.Metrics.ProcessCount = int(bucket.processCount / count)
-		}
-		samples = append(samples, bucket.sample)
 	}
 	return samples, nil
 }
@@ -812,8 +943,30 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]model.AuditEvent, e
 }
 
 func (s *Store) PruneMetrics(ctx context.Context, before time.Time) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM metric_samples WHERE observed_at < ?`, before.UTC().Format(time.RFC3339Nano))
-	return err
+	now := time.Now().UTC()
+	if before.IsZero() {
+		before = now.Add(-30 * 24 * time.Hour)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	for _, tier := range metricBucketTiers {
+		cutoff := now.Add(-tier.retention)
+		if cutoff.Before(before) {
+			cutoff = before
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM metric_buckets
+			WHERE resolution_seconds = ? AND bucket_start < ?`, tier.seconds, metricBucketStart(cutoff, tier.seconds)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM metric_samples WHERE observed_at < ?`, before.UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListAlertRules(ctx context.Context) ([]model.AlertRule, error) {

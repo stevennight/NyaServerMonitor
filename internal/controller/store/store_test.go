@@ -2,11 +2,32 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"nyaservermonitor/internal/shared/model"
 )
+
+func insertMetricBucketTestSample(t *testing.T, st *Store, nodeID string, observedAt time.Time, sequence uint64, snapshot model.MetricsSnapshot) {
+	t.Helper()
+	snapshotJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := st.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertMetricBuckets(context.Background(), tx, nodeID, observedAt, sequence, snapshot, snapshotJSON, []byte("[]")); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 	ctx := context.Background()
@@ -122,6 +143,167 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 	got, err = st.GetNode(ctx, node.ID)
 	if err != nil || got.IPOverride != "" || got.CountryOverride != "" || got.LastIP != "198.51.100.30" {
 		t.Fatalf("manual overrides were not cleared = %#v, err=%v", got, err)
+	}
+}
+
+func TestMetricBucketsAggregateAndSelectResolution(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/metrics.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	insertMetricBucketTestSample(t, st, "node_metrics", now, 1, model.MetricsSnapshot{
+		CPUPercent:       10,
+		Load1:            1,
+		MemoryTotalBytes: 1000,
+		MemoryUsedBytes:  200,
+		UptimeSeconds:    100,
+		ProcessCount:     10,
+		Disks:            []model.DiskMetric{{Device: "vda", TotalBytes: 1000, UsedBytes: 200}},
+		Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 100, BytesOut: 50}},
+	})
+	insertMetricBucketTestSample(t, st, "node_metrics", now.Add(5*time.Second), 2, model.MetricsSnapshot{
+		CPUPercent:       30,
+		Load1:            3,
+		MemoryTotalBytes: 1200,
+		MemoryUsedBytes:  400,
+		UptimeSeconds:    105,
+		ProcessCount:     20,
+		Disks:            []model.DiskMetric{{Device: "vda", TotalBytes: 1000, UsedBytes: 300}},
+		Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 300, BytesOut: 150}},
+	})
+
+	samples, err := st.ListMetrics(ctx, "node_metrics", now.Add(-time.Hour), 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("aggregated samples = %d, want 1: %#v", len(samples), samples)
+	}
+	got := samples[0]
+	if got.Sequence != 2 || got.Metrics.CPUPercent != 20 || got.Metrics.Load1 != 2 || got.Metrics.MemoryUsedBytes != 300 || got.Metrics.ProcessCount != 15 {
+		t.Fatalf("unexpected aggregate: %#v", got)
+	}
+	if got.Metrics.UptimeSeconds != 105 || len(got.Metrics.Networks) != 1 || got.Metrics.Networks[0].BytesIn != 300 || got.Metrics.Disks[0].UsedBytes != 300 {
+		t.Fatalf("last snapshot was not retained: %#v", got.Metrics)
+	}
+
+	var sampleCount int
+	if err := st.db.QueryRowContext(ctx, `SELECT sample_count FROM metric_buckets WHERE node_id = ? AND resolution_seconds = 60`, "node_metrics").Scan(&sampleCount); err != nil {
+		t.Fatal(err)
+	}
+	if sampleCount != 2 {
+		t.Fatalf("bucket sample_count = %d, want 2", sampleCount)
+	}
+
+	resolutionCases := []struct {
+		name     string
+		duration time.Duration
+		limit    int
+		want     int64
+	}{
+		{name: "hour", duration: time.Hour, limit: 2000, want: 60},
+		{name: "six hours plus request skew", duration: 6*time.Hour + time.Second, limit: 2000, want: 60},
+		{name: "half day", duration: 12 * time.Hour, limit: 2000, want: 300},
+		{name: "one day plus request skew", duration: 24*time.Hour + time.Second, limit: 2000, want: 300},
+		{name: "two days", duration: 48 * time.Hour, limit: 2000, want: 1800},
+		{name: "two weeks", duration: 14 * 24 * time.Hour, limit: 2000, want: 7200},
+	}
+	for _, test := range resolutionCases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := metricResolutionFor(now.Add(-test.duration), now, test.limit); got != test.want {
+				t.Fatalf("metric resolution = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestMetricPruneRemovesExpiredTiers(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/prune.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	snapshot := model.MetricsSnapshot{CPUPercent: 12}
+	insertMetricBucketTestSample(t, st, "node_prune", now.Add(-48*time.Hour), 1, snapshot)
+	insertMetricBucketTestSample(t, st, "node_prune", now, 2, snapshot)
+	if err := st.PruneMetrics(ctx, now.Add(-30*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, tier := range metricBucketTiers {
+		var count int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_buckets WHERE node_id = ? AND resolution_seconds = ?`, "node_prune", tier.seconds).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if tier.seconds == 30*60 || tier.seconds == 2*60*60 {
+			want = 2
+		}
+		if count != want {
+			t.Fatalf("resolution %d bucket count = %d, want %d", tier.seconds, count, want)
+		}
+	}
+	if err := st.PruneMetrics(ctx, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_buckets WHERE node_id = ?`, "node_prune").Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != len(metricBucketTiers) {
+		t.Fatalf("global retention did not remove old coarse buckets: %d", remaining)
+	}
+}
+
+func TestLegacyMetricSamplesAreCompactedOnOpen(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/legacy.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE metric_samples (id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL, observed_at TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0, snapshot_json TEXT NOT NULL, checks_json TEXT NOT NULL DEFAULT '[]')`); err != nil {
+		t.Fatal(err)
+	}
+	snapshotJSON, err := json.Marshal(model.MetricsSnapshot{CPUPercent: 42, MemoryTotalBytes: 100, MemoryUsedBytes: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTime := time.Now().UTC().Add(-2 * time.Hour)
+	if _, err := db.ExecContext(ctx, `INSERT INTO metric_samples (node_id, observed_at, sequence, snapshot_json, checks_json) VALUES (?, ?, ?, ?, '[]')`, "node_legacy", legacyTime.Format(time.RFC3339Nano), 9, string(snapshotJSON)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var legacyCount, bucketCount int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_samples`).Scan(&legacyCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_buckets WHERE node_id = ?`, "node_legacy").Scan(&bucketCount); err != nil {
+		t.Fatal(err)
+	}
+	if legacyCount != 0 || bucketCount != len(metricBucketTiers) {
+		t.Fatalf("legacy compaction counts = legacy %d, buckets %d", legacyCount, bucketCount)
+	}
+	samples, err := st.ListMetrics(ctx, "node_legacy", time.Now().UTC().Add(-3*time.Hour), 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 || samples[0].Metrics.CPUPercent != 42 || samples[0].Sequence != 9 {
+		t.Fatalf("compacted legacy sample = %#v", samples)
 	}
 }
 

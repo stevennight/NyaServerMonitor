@@ -4,7 +4,7 @@
 
 主节点和子节点是两个不同的安全域。主节点保存管理员会话、节点 ID 和 token 派生值；子节点保存自己的 token 和本地健康检查配置。主节点不保存 SSH 私钥，不挂载 Docker socket，不连接子节点的 SSH/WinRM，也不提供远程命令接口。
 
-子节点只主动发起连接。指标历史使用 `POST /api/agent/v1/report`，响应仍只有接受结果和服务器时间；另有一个 node 主动建立的 `ws/wss /api/node/ws` 控制连接，允许固定的 hello、heartbeat、telemetry、update_status 和签名 update 消息。telemetry 只包含经过校验的网络累计计数和速率，controller 不把它高频写入数据库。管理员页面通过需要会话的 `GET /api/telemetry/stream` SSE 接收实时值。探针不会把主节点响应解析成配置、命令、URL 或脚本。
+子节点只主动发起连接。指标历史使用 `POST /api/agent/v1/report`，响应仍只有接受结果和服务器时间；另有一个 node 主动建立的 `ws/wss /api/node/ws` 控制连接，允许固定的 hello、heartbeat、telemetry、update_status 和签名 update 消息。telemetry 携带经过校验的完整实时资源快照、网络累计计数和速率，controller 不把它高频写入数据库。管理员页面通过需要会话的 `GET /api/telemetry/stream` SSE 接收完整实时值，公开页面通过 `GET /api/public/telemetry/stream` 接收脱敏后的 CPU、负载、内存、磁盘、运行时间和网络速率。探针不会把主节点响应解析成配置、命令、URL 或脚本。
 
 ## 报告认证
 
@@ -27,9 +27,9 @@ token 只在创建、显式轮换或管理员请求安装命令的受保护响�
 
 ## 公开状态页
 
-根页面可以在未登录时展示公开状态。公开接口使用独立的白名单响应结构，返回节点名称、不可逆短 ID、地区、分组、标签、状态、粗粒度 CPU/内存/磁盘百分比、平台和探针版本；`GET /api/public/nodes/{id}/metrics` 只返回 CPU/内存/磁盘/负载和聚合网络流量历史，用于公开详情图表。公开接口不会返回原始节点 ID、IP、主机名、内核、网卡名、检查目标或审计事件。管理员登录后，根路径切换为私有监控首页，允许查看完整节点状态和敏感详情；节点创建、凭据轮换、撤销/恢复和审计位于 `/admin` 管理后台。
+根页面可以在未登录时展示公开状态。公开接口使用独立的白名单响应结构，返回节点名称、不可逆短 ID、地区、分组、标签、状态、粗粒度 CPU/内存/磁盘百分比、平台和探针版本；`GET /api/public/nodes/{id}/metrics` 只返回 CPU/内存/磁盘/负载和聚合网络流量历史，`GET /api/public/telemetry/stream` 只返回哈希节点 ID、资源摘要和网络速率，用于公开详情图表的实时更新。公开接口不会返回原始节点 ID、IP、主机名、内核、网卡名、检查目标或审计事件。管理员登录后，根路径切换为私有监控首页，允许查看完整节点状态和敏感详情；节点创建、凭据轮换、撤销/恢复和审计位于 `/admin` 管理后台。
 
-未登录请求除以下明确的公开接口外不会得到私有数据：`GET /api/public/dashboard`、`GET /api/public/nodes/{id}/metrics`、`GET /api/setup/status`、登录/首次初始化接口以及子节点的签名报告接口。`/api/dashboard`、`/api/nodes`、`/api/nodes/{id}`、指标、告警、通知渠道、审计、控制器信息和 TOTP 接口均经过会话校验；未登录直接访问 `/admin` 也只返回静态登录界面，不触发私有 API 加载。
+未登录请求除以下明确的公开接口外不会得到私有数据：`GET /api/public/dashboard`、`GET /api/public/nodes/{id}/metrics`、`GET /api/public/telemetry/stream`、`GET /api/setup/status`、登录/首次初始化接口以及子节点的签名报告接口。`/api/dashboard`、`/api/nodes`、`/api/nodes/{id}`、指标、告警、通知渠道、审计、控制器信息和 TOTP 接口均经过会话校验；未登录直接访问 `/admin` 也只返回静态登录界面，不触发私有 API 加载。
 
 公开页的风险是信息泄露和可用性侦察，而不是权限提升：攻击者可以推断资产规模、节点命名和故障窗口，也可以抓取公开接口。公开接口只读、仅 GET、使用 5 秒服务端缓存并设置 `noindex`，但这不能阻止抓取。节点名称应按公开信息设计；不希望暴露状态时，应在反向代理、VPN 或防火墙层关闭公开入口。
 

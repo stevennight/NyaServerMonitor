@@ -53,7 +53,14 @@ func collectPlatform(state *platformState) (model.MetricsSnapshot, error) {
 
 func collectLivePlatform(state *platformState) (model.LiveTelemetry, error) {
 	snapshot := model.MetricsSnapshot{}
-	return model.LiveTelemetry{Networks: readNetwork(&snapshot, state)}, nil
+	readCPU(&snapshot, state)
+	readLoad(&snapshot)
+	readMemory(&snapshot)
+	readUptime(&snapshot)
+	rates := readNetwork(&snapshot, state)
+	readDisks(&snapshot)
+	snapshot.ProcessCount = processCount()
+	return model.LiveTelemetry{Metrics: snapshot, Networks: rates}, nil
 }
 
 func readCPU(snapshot *model.MetricsSnapshot, state *platformState) {

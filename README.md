@@ -14,7 +14,7 @@
               node agent
 ```
 
-子节点没有监听管理端口。node 只主动连接主节点：指标历史仍通过签名 HTTP 上报，node WebSocket 另外承载心跳、实时网络遥测、更新状态和已签名 node 更新包；管理员监控页通过认证 SSE 接收实时遥测。主节点不能通过本项目向子节点发送 shell、脚本、任意配置或任意命令；健康检查配置保存在子节点本地。
+子节点没有监听管理端口。node 只主动连接主节点：指标历史仍通过签名 HTTP 上报，node WebSocket 另外承载心跳、完整实时指标、实时网络遥测、更新状态和已签名 node 更新包；管理员和公开状态页分别通过脱敏的 SSE 接收实时遥测。主节点不能通过本项目向子节点发送 shell、脚本、任意配置或任意命令；健康检查配置保存在子节点本地。
 
 初版已包含：
 
@@ -26,7 +26,7 @@
 - WebSocket 控制通道和 Ed25519 签名 node 更新，固定 systemd updater 原子替换并重启 node。
 - HMAC 请求签名、时间窗口、nonce 防重放、凭据哈希存储、严格 JSON 白名单和报告大小限制。
 - 管理员 PBKDF2 密码哈希、登录限速、可选 TOTP、审计日志。
-- SQLite 指标历史、自动清理、时间桶降采样、活动告警和嵌入式中文面板。
+- SQLite 指标历史、按粒度时间桶聚合、自动清理过期桶、活动告警和嵌入式中文面板。
 
 ## 本地运行
 
@@ -56,7 +56,7 @@ go run ./cmd/node
 
 节点详情中的“出口 IP”是 controller 从节点主动上报连接看到的来源地址，通常代表节点的公网出口地址；节点本机采集的网卡 IP 单独展示，可能是内网地址。若部署了反向代理，controller 看到的地址可能是代理地址，此时可在节点编辑中填写人工 IP 覆盖。人工国家/地区覆盖同样只有在管理员清空后才会恢复自动识别。
 
-未登录状态下成功返回的数据只有公开状态、公开节点聚合指标和初始化状态。除 `GET /api/public/dashboard`、`GET /api/public/nodes/{id}/metrics`、`GET /api/setup/status`、登录/初始化及子节点报告接口外，所有 API（包括私有指标、告警和通知渠道接口）都要求管理员会话；直接访问 `/admin` 未登录时只显示登录表单，不加载私有数据。
+未登录状态下成功返回的数据只有公开状态、公开节点聚合指标、公开实时摘要和初始化状态。除 `GET /api/public/dashboard`、`GET /api/public/nodes/{id}/metrics`、`GET /api/public/telemetry/stream`、`GET /api/setup/status`、登录/初始化及子节点报告接口外，所有 API（包括私有指标、告警和通知渠道接口）都要求管理员会话；直接访问 `/admin` 未登录时只显示登录表单，不加载私有数据。
 
 公开状态页仍会暴露资产数量、节点名称和可用性，节点名称不要包含域名、IP、机房、业务密钥或其他内部信息。若监控面板不应被互联网访问，应在反向代理、VPN 或防火墙层限制访问；公开页的 `noindex` 和短缓存不能替代访问控制。
 
@@ -154,7 +154,7 @@ SHA256(BODY)
 
 主控更新流程是固定且单向授权的：管理员请求某个版本后，controller 通过 node 主动建立的 WebSocket 下发版本、manifest、manifest 签名和公钥标识；node 先验证 Ed25519 签名、版本、当前平台、SHA256 和文件大小，再写入受保护的更新请求文件。固定的 `nyasm-node-update.path` 只会调用固定的 `nyasm-node update`，下载固定 controller 路径的 gzip 二进制，完成校验后原子替换 `/usr/local/bin/nyasm-node` 并重启固定的 `nyasm-node` 服务。控制消息没有 shell、脚本、任意 URL、任意路径、配置或回滚字段。
 
-WebSocket 不是报告的唯一通道：指标历史仍走 `POST /api/agent/v1/report`，这样报告签名、防重放和 HTTP 限制保持不变；node WebSocket 以默认 2 秒间隔发送轻量网络遥测，controller 只在内存中保留最新值并通过认证的 `GET /api/telemetry/stream` SSE 推送给管理员页面。node 始终主动出站连接，主控不需要访问 node 的 SSH、HTTP 或管理端口。
+WebSocket 不是报告的唯一通道：指标历史仍走 `POST /api/agent/v1/report`，这样报告签名、防重放和 HTTP 限制保持不变；node WebSocket 默认每 2 秒发送 CPU、负载、内存、磁盘、运行时间、进程数和网络实时速率，controller 只在内存中保留最新实时值，并通过认证的 `GET /api/telemetry/stream` 和脱敏的 `GET /api/public/telemetry/stream` SSE 推送给对应页面。历史指标按 1 分钟（6 小时）、5 分钟（24 小时）、30 分钟（7 天）和 2 小时（30 天）聚合保存，维护周期会删除各粒度过期桶；旧的原始采样会在启动时迁移并清理。node 始终主动出站连接，主控不需要访问 node 的 SSH、HTTP 或管理端口。
 
 详细边界见 [docs/security.md](docs/security.md)。
 

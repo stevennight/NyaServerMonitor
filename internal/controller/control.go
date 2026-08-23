@@ -203,6 +203,12 @@ func (s *Server) handleNodeWS(w http.ResponseWriter, r *http.Request, node model
 			if err := s.store.MarkNodeSeen(r.Context(), node.ID, message.System, message.Version); err != nil {
 				return
 			}
+			s.telemetry.Publish(model.LiveTelemetry{
+				NodeID:              node.ID,
+				AgentVersion:        message.Version,
+				System:              message.System,
+				ObservedAtUnixMilli: time.Now().UnixMilli(),
+			})
 			if message.UpdateReport != nil {
 				if err := s.store.UpdateNodeReport(r.Context(), node.ID, *message.UpdateReport); err != nil {
 					s.log.Warn("save node update report failed", "node_id", node.ID, "error", err)

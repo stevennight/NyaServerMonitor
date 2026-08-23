@@ -147,6 +147,10 @@ type LiveTelemetry struct {
 	NodeID              string              `json:"node_id"`
 	Sequence            uint64              `json:"sequence"`
 	ObservedAtUnixMilli int64               `json:"observed_at_unix_milli"`
+	AgentVersion        string              `json:"agent_version,omitempty"`
+	System              SystemInfo          `json:"system,omitempty"`
+	Metrics             MetricsSnapshot     `json:"metrics,omitempty"`
+	MetricsAvailable    bool                `json:"metrics_available,omitempty"`
 	Networks            []LiveNetworkMetric `json:"networks,omitempty"`
 }
 

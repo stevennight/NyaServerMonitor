@@ -162,16 +162,13 @@ func controlTelemetry(ctx context.Context, conn *websocket.Conn, cfg Config, wri
 				continue
 			}
 			sequence++
-			message := sharedprotocol.ControlMessage{
-				Type:   "telemetry",
-				NodeID: cfg.NodeID,
-				Telemetry: &model.LiveTelemetry{
-					NodeID:              cfg.NodeID,
-					Sequence:            sequence,
-					ObservedAtUnixMilli: time.Now().UnixMilli(),
-					Networks:            telemetry.Networks,
-				},
-			}
+			telemetry.NodeID = cfg.NodeID
+			telemetry.Sequence = sequence
+			telemetry.ObservedAtUnixMilli = time.Now().UnixMilli()
+			telemetry.AgentVersion = sharedversion.Version
+			telemetry.System = nodeSystem()
+			telemetry.MetricsAvailable = true
+			message := sharedprotocol.ControlMessage{Type: "telemetry", NodeID: cfg.NodeID, Telemetry: &telemetry}
 			if err := write(message); err != nil {
 				logControlFailure(log, ctx, "live telemetry write failed", err)
 				return
