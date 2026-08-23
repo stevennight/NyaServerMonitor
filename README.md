@@ -101,11 +101,34 @@ go run ./cmd/node
 
 ## Docker 主节点
 
+部署配置位于 `deploy/docker`，不需要额外指定 `--env-file` 或 `-f`。数据使用该目录下的 `./data` bind mount，迁移时直接复制 `deploy/docker/data` 即可。
+
 ```bash
-docker compose --env-file deploy/docker/.env -f deploy/docker/docker-compose.yml up -d
+cd deploy/docker
+cp .env.example .env
+# 编辑 .env，至少设置 NYASM_PUBLIC_URL；通知功能需要设置 NYASM_NOTIFICATION_KEY。
+docker compose up -d --build
 ```
 
-复制 `deploy/docker/.env.example` 为 `.env`，至少设置公开 HTTPS URL 和镜像版本。不要给主节点挂载 Docker socket，不要把宿主机根目录、SSH key 或任何控制面凭据挂进容器。
+更新已发布的 GHCR 镜像时，把 `.env` 中的 `NYASM_IMAGE` 和 `NYASM_VERSION` 改为对应版本，然后执行：
+
+```bash
+cd deploy/docker
+docker compose pull
+docker compose up -d
+```
+
+主节点容器会以只读根文件系统运行，只有 `./data` 可写；容器启动入口会先修正该目录权限，再降权为专用 `nyasm` 用户运行 controller。不要给主节点挂载 Docker socket，不要把宿主机根目录、SSH key 或任何控制面凭据挂进容器。
+
+如果已有旧 named volume，需要迁移一次：先停止 compose，使用 `docker volume ls` 找到旧卷，再将旧卷内容复制到 `deploy/docker/data`，之后删除 compose 中的旧 volume 后启动。新的配置不会再创建 named volume。
+
+反向代理可使用 [deploy/caddy/Caddyfile](deploy/caddy/Caddyfile)，生产环境必须使用 HTTPS。
+
+## CI 与发布
+
+GitHub Actions 位于 `.github/workflows`：PR 和 `main`/`master` push 会执行 gofmt、Go 测试、race 测试、vet、Linux amd64/arm64 构建、Compose 校验和 Docker 构建。
+
+推送 `v*` 标签会创建 GitHub Release，发布 controller/node 的 Linux amd64/arm64 二进制、SHA256 校验文件，并将包含两种 node 二进制的 controller 镜像推送到 GHCR。镜像内置 `NYASM_NODE_BINARY_DIR`，所以 amd64 controller 可以为 arm64 子节点提供正确的探针二进制。
 
 ## 安全边界
 

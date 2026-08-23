@@ -1,21 +1,26 @@
 services:
   controller:
+    image: ${NYASM_IMAGE:-nyaservermonitor}:${NYASM_VERSION:-dev}
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    image: ${NYASM_IMAGE:-nyaservermonitor}:${NYASM_VERSION:-dev}
+      args:
+        NYASM_VERSION: ${NYASM_VERSION:-0.1.0-dev}
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev
     environment:
       NYASM_LISTEN: ":8080"
       NYASM_DATA: /data
       NYASM_PUBLIC_URL: ${NYASM_PUBLIC_URL:?set NYASM_PUBLIC_URL in deploy/docker/.env}
       NYASM_NODE_BINARY: /usr/local/bin/nyasm-node
+      NYASM_NODE_BINARY_DIR: /usr/local/lib/nyasm
       NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
       NYASM_NOTIFICATION_KEY: ${NYASM_NOTIFICATION_KEY:-}
     volumes:
-      - nyasm-data:/data
+      - ./data:/data
     ports:
       - "${NYASM_BIND_ADDR:-127.0.0.1}:${NYASM_HOST_PORT:-8080}:8080"
-
-volumes:
-  nyasm-data:

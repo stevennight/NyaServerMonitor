@@ -1,5 +1,8 @@
 /data/
+/deploy/docker/data/
+/deploy/docker/.env
 /node-data/
+/dist/
 /.tmp/
 /.gocache/
 /.gocache-*/
