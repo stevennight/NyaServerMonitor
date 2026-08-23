@@ -74,7 +74,7 @@
       const privateStats=root.querySelector('.private-page .grid.stats');if(privateStats)privateStats.insertAdjacentHTML('beforeend',`<div class="stat"><div class="label">活动告警</div><div class="value ${d.active_alerts?'bad':''}">${d.active_alerts||0}</div><div class="hint">需要关注的事件</div></div>`);if(d.recent_alerts?.length)root.querySelector('.private-main')?.insertAdjacentHTML('beforeend',`<section class="panel" style="margin-top:16px"><div class="panel-head"><h3>最近告警</h3><button class="btn small" id="private-alerts">管理告警</button></div><div class="panel-body">${alertEventRows(d.recent_alerts)}</div></section>`);const privateAlerts=document.getElementById('private-alerts');if(privateAlerts)privateAlerts.onclick=()=>{go('admin');state.view='alerts';render();refresh();};
     }
     function statusBadge(status){const label={online:'在线',offline:'离线',pending:'待上报',revoked:'已撤销'}[status]||status;return `<span class="badge ${esc(status)}"><span class="mini-dot"></span>${label}</span>`;}
-    function nodeRows(nodes){ if(!nodes?.length)return '<tr><td colspan="5" class="empty">还没有节点。创建一个节点并在目标机器上运行探针。</td></tr>'; return nodes.map(n=>`<tr data-node="${esc(n.id)}"><td><div class="node-name">${esc(n.name)}</div><div class="node-id">${esc(n.id)}</div></td><td>${statusBadge(n.status)}</td><td>${esc(n.system?.hostname||'未上报')}<div class="muted">${esc(n.system?.os||'')} ${esc(n.system?.arch||'')}</div></td><td>${n.status==='online'?pct(n.metrics?.cpu_percent):'--'}<div class="muted">${n.status==='online'?fmtBytes(n.metrics?.memory_used_bytes)+' / '+fmtBytes(n.metrics?.memory_total_bytes):'--'}</div></td><td>${fmtTime(n.last_seen)}</td></tr>`).join(''); }
+    function nodeRows(nodes){ if(!nodes?.length)return '<tr><td colspan="6" class="empty">还没有节点。创建一个节点并在目标机器上运行探针。</td></tr>'; return nodes.map(n=>`<tr data-node="${esc(n.id)}"><td><div class="node-name">${esc(n.name)}</div><div class="node-id">${esc(n.id)}</div></td><td>${statusBadge(n.status)}</td><td>${esc(n.system?.hostname||'未上报')}<div class="muted">${esc(n.system?.os||'')} ${esc(n.system?.arch||'')}</div></td><td><div class="mono">${esc(n.agent_version||'待上报')}</div></td><td>${n.status==='online'?pct(n.metrics?.cpu_percent):'--'}<div class="muted">${n.status==='online'?fmtBytes(n.metrics?.memory_used_bytes)+' / '+fmtBytes(n.metrics?.memory_total_bytes):'--'}</div></td><td>${fmtTime(n.last_seen)}</td></tr>`).join(''); }
     function resourceMarkup(label,value,detail,tone=''){const barValue=parseFloat(value)||0;return `<div class="resource"><div class="resource-head"><span>${label}</span><span class="resource-value">${value}</span></div><div class="resource-meter ${tone}"><span style="width:${pctNumber(barValue)}%"></span></div><div class="resource-detail" title="${esc(detail)}">${esc(detail)}</div></div>`;}
     function diskResourceMarkup(node,telemetry){const disks=diskMetrics(node);if(!telemetry||!disks.length)return resourceMarkup('磁盘','--','暂无数据');const peak=diskPercent(node);const lines=disks.map(disk=>`<span class="disk-line"><span class="disk-label mono">${esc(diskName(disk))}</span><span class="disk-value">${diskUsePercent(disk).toFixed(1)}% · ${esc(fmtBytes(disk.used_bytes))} / ${esc(fmtBytes(disk.total_bytes))}</span></span>`).join('');const title=disks.map(disk=>`${diskName(disk)} · ${diskUsePercent(disk).toFixed(1)}% · ${fmtBytes(disk.used_bytes)} / ${fmtBytes(disk.total_bytes)}`).join(' | ');return `<div class="resource disk-resource"><div class="resource-head"><span>磁盘</span><span class="resource-value">${peak.toFixed(1)}%</span></div><div class="resource-meter ${peak>=90?'bad':peak>=75?'warn':''}"><span style="width:${pctNumber(peak)}%"></span></div><div class="resource-detail disk-details" title="${esc(title)}">${lines}</div></div>`;}
     function nodeCard(node){const telemetry=hasTelemetry(node);const memory=memoryPercent(node);const checks=checksSummary(node);const degraded=nodeHasDegraded(node);const network=networkTotal(node);const hostname=node.system?.hostname||'未上报';const platform=[node.system?.os,node.system?.arch].filter(Boolean).join(' / ')||'系统信息待上报';const address=node.last_ip||node.system?.ip||'地址待上报';const checkText=checks.total?`${checks.up}/${checks.total} 正常`:'未配置';return `<article class="node-card ${esc(node.status)}${degraded?' degraded':''}" data-node="${esc(node.id)}" role="button" tabindex="0" aria-label="查看 ${esc(node.name)} 详情"><div class="node-card-head"><div class="node-card-title"><strong>${esc(node.name)}</strong><span>${esc(hostname)} · ${esc(platform)}</span></div>${statusBadge(node.status)}</div><div class="node-card-subline"><span>${esc(nodeGroup(node))}</span>${(node.tags||[]).slice(0,3).map(tag=>`<span class="node-tag">${esc(tag)}</span>`).join('')}${degraded?'<span class="badge degraded"><span class="mini-dot"></span>检查异常</span>':''}</div><div class="node-card-meta"><div class="node-meta-item"><div class="meta-label">地址</div><div class="meta-value mono" title="${esc(address)}">${esc(address)}</div></div><div class="node-meta-item"><div class="meta-label">探针</div><div class="meta-value mono">${esc(node.agent_version||'待上报')}</div></div></div><div class="node-resource-grid">${resourceMarkup('CPU',telemetry?pct(node.metrics?.cpu_percent):'--',telemetry?`${Number(node.metrics?.cpu_percent||0).toFixed(1)}% 使用率`:'暂无数据',telemetry&&Number(node.metrics?.cpu_percent||0)>=90?'bad':telemetry&&Number(node.metrics?.cpu_percent||0)>=75?'warn':'')}${resourceMarkup('内存',telemetry?memoryPercent(node).toFixed(1)+'%':'--',telemetry?`${fmtBytes(node.metrics?.memory_used_bytes)} / ${fmtBytes(node.metrics?.memory_total_bytes)}`:'暂无数据',memory>=90?'bad':memory>=75?'warn':'')}${diskResourceMarkup(node,telemetry)}${resourceMarkup('负载',telemetry?Number(node.metrics?.load1||0).toFixed(2):'--',telemetry?`${node.system?.cpu_count||'?'} 核 · 1 分钟`:'暂无数据','')}</div><div class="node-card-foot"><span class="node-foot-item">服务 <strong>${esc(checkText)}</strong></span><span class="node-foot-item">流量 <strong>${fmtBytes(network)}</strong></span><span class="node-foot-item">运行 <strong>${fmtDuration(node.metrics?.uptime_seconds)}</strong></span><span class="node-foot-item">上报 <strong>${fmtTime(node.last_seen)}</strong></span></div></article>`;}
@@ -82,7 +82,7 @@
     function groupOptions(nodes){const groups=[...new Set((nodes||[]).map(nodeGroup))].sort((a,b)=>a.localeCompare(b,'zh-CN'));return `<option value="all">全部分组</option>${groups.map(group=>`<option value="${esc(group)}"${state.filters.group===group?' selected':''}>${esc(group)}</option>`).join('')}`;}
     function eventRows(events){ if(!events?.length)return '<div class="empty">暂无审计事件</div>'; return events.map(e=>`<div class="event"><span class="event-pin"></span><div><div class="event-title">${esc(e.action)}</div><div class="event-detail">${esc(e.actor)} · ${esc(e.target)}</div></div><div class="event-time">${fmtTime(e.created_at)}</div></div>`).join(''); }
     function overview(){const d=state.dashboard||{nodes:[],recent_events:[]};const nodes=d.nodes||[];const visible=visibleNodes(nodes);const degradedNodes=nodes.filter(nodeHasDegraded).length;const pendingNodes=nodes.filter(n=>n.status==='pending').length;const generated=d.generated_at_unix?d.generated_at_unix*1000:null;return `<div class="view-head"><div><h2>监控总览</h2><p>所有节点的最新状态与资源概览。</p></div><div class="actions"><button class="btn primary" id="new-node">+ 添加节点</button></div></div><div class="grid stats"><div class="stat"><div class="label">节点总数</div><div class="value">${d.total_nodes||0}</div><div class="hint">已注册节点</div></div><div class="stat"><div class="label">在线</div><div class="value good">${d.online_nodes||0}</div><div class="hint">正在上报</div></div><div class="stat"><div class="label">离线</div><div class="value ${d.offline_nodes?'warn':''}">${d.offline_nodes||0}</div><div class="hint">超过离线阈值</div></div><div class="stat"><div class="label">检查异常</div><div class="value ${degradedNodes?'bad':''}">${degradedNodes}</div><div class="hint">${d.degraded_checks||0} 个服务检查</div></div><div class="stat"><div class="label">待上报</div><div class="value ${pendingNodes?'warn':''}">${pendingNodes}</div><div class="hint">尚未连接</div></div><div class="stat"><div class="label">已撤销</div><div class="value ${d.revoked_nodes?'bad':''}">${d.revoked_nodes||0}</div><div class="hint">凭据已失效</div></div></div><div class="monitor-toolbar"><div class="search-field"><span class="search-icon">⌕</span><input id="node-search" type="search" value="${esc(state.filters.query)}" placeholder="搜索节点、主机、IP 或标签" aria-label="搜索节点"></div><label class="filter-select">状态<select id="status-filter"><option value="all"${state.filters.status==='all'?' selected':''}>全部状态</option><option value="online"${state.filters.status==='online'?' selected':''}>在线</option><option value="degraded"${state.filters.status==='degraded'?' selected':''}>检查异常</option><option value="offline"${state.filters.status==='offline'?' selected':''}>离线</option><option value="pending"${state.filters.status==='pending'?' selected':''}>待上报</option><option value="revoked"${state.filters.status==='revoked'?' selected':''}>已撤销</option></select></label><label class="filter-select">分组<select id="group-filter">${groupOptions(nodes)}</select></label><label class="auto-refresh"><input id="auto-refresh" type="checkbox"${state.autoRefresh?' checked':''}> 自动刷新</label><span id="node-count" class="monitor-count muted">${visible.length} / ${nodes.length} 个节点</span></div><section class="node-wall"><div class="wall-head"><h3>节点状态墙</h3><span class="muted">更新于 ${fmtTime(generated)}</span></div><div id="node-grid" class="node-grid">${nodeCards(visible)}</div></section><div class="grid columns" style="margin-top:24px"><section class="panel"><div class="panel-head"><h3>最近审计</h3><button class="btn small" data-view="audit">查看全部</button></div><div class="panel-body">${eventRows(d.recent_events)}</div></section><section class="panel"><div class="panel-head"><h3>运行说明</h3><span class="muted">只读汇总</span></div><div class="panel-body"><div class="event"><span class="event-pin"></span><div><div class="event-title">主节点只接收探针报告</div><div class="event-detail">不会向子节点发送 shell、脚本、配置或更新指令。</div></div></div><div class="event"><span class="event-pin"></span><div><div class="event-title">凭据由节点独立持有</div><div class="event-detail">token 仅在创建或轮换时显示，数据库只保存派生哈希。</div></div></div></div></section></div>`;}
-     function nodesView(){return `<div class="view-head"><div><h2>节点管理</h2><p>安装命令仅读取当前凭据；轮换凭据会立即使旧 token 失效。</p></div><div class="actions"><button class="btn primary" id="new-node">+ 添加节点</button></div></div><section class="panel"><div class="panel-head"><h3>全部节点</h3><span class="muted">${state.nodes.length} 个</span></div><div class="table-wrap"><table class="table"><thead><tr><th>节点</th><th>状态</th><th>主机</th><th>CPU / 内存</th><th>最近上报</th></tr></thead><tbody>${nodeRows(state.nodes)}</tbody></table></div></section>${state.selected?detailView(state.selected):''}`;}
+     function nodesView(){return `<div class="view-head"><div><h2>节点管理</h2><p>安装命令仅读取当前凭据；轮换凭据会立即使旧 token 失效。</p></div><div class="actions"><button class="btn primary" id="new-node">+ 添加节点</button></div></div><section class="panel"><div class="panel-head"><h3>全部节点</h3><span class="muted">${state.nodes.length} 个</span></div><div class="table-wrap"><table class="table"><thead><tr><th>节点</th><th>状态</th><th>主机</th><th>探针版本</th><th>CPU / 内存</th><th>最近上报</th></tr></thead><tbody>${nodeRows(state.nodes)}</tbody></table></div></section>${state.selected?detailView(state.selected):''}`;}
      function chartLine(samples,getter,formatter){const visible=(samples||[]).slice(-72);if(!visible.length)return '<div class="empty chart-empty">暂无历史指标</div>';const values=visible.map(sample=>{const value=Number(getter(sample));return Number.isFinite(value)?value:0;});let min=Math.min(...values),max=Math.max(...values),range=max-min;if(range===0){range=Math.max(Math.abs(max)*.2,1);min=Math.max(0,min-range/2);max=max+range/2;}else{const padding=range*.1;min=Math.max(0,min-padding);max=max+padding;}const width=640,height=190,left=42,right=10,top=12,bottom=30,plotWidth=width-left-right,plotHeight=height-top-bottom,baseY=top+plotHeight;const pointAt=(value,index)=>{const x=visible.length===1?left+plotWidth/2:left+index/(visible.length-1)*plotWidth;const y=top+(max-value)/(max-min)*plotHeight;return {x,y};};const points=values.map(pointAt);const pointString=points.map(point=>`${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');const areaPath=`M ${points[0].x.toFixed(2)} ${baseY.toFixed(2)} L ${pointString.replace(/,/g,' ')} L ${points[points.length-1].x.toFixed(2)} ${baseY.toFixed(2)} Z`;const gridValues=[max,(max+min)/2,min];const grid=gridValues.map(value=>{const y=top+(max-value)/(max-min)*plotHeight;return `<line class="chart-grid-line" x1="${left}" y1="${y.toFixed(2)}" x2="${width-right}" y2="${y.toFixed(2)}"></line><text class="chart-axis-label" x="${left-8}" y="${(y+3).toFixed(2)}" text-anchor="end">${esc(formatter(value))}</text>`;}).join('');const labelIndexes=[0,Math.floor((visible.length-1)/2),visible.length-1].filter((index,position,all)=>all.indexOf(index)===position);const labels=labelIndexes.map(index=>{const date=new Date(visible[index].observed_at);const label=Number.isNaN(date.getTime())?'--':`${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;const point=points[index];return `<text class="chart-axis-label" x="${point.x.toFixed(2)}" y="${height-7}" text-anchor="middle">${esc(label)}</text>`;}).join('');const circles=points.map((point,index)=>{const date=new Date(visible[index].observed_at);const timestamp=Number.isNaN(date.getTime())?'未知时间':date.toLocaleString();return `<circle class="chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"><title>${esc(timestamp)} · ${esc(formatter(values[index]))}</title></circle>`;}).join('');return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg>`;}
      function historyCard(title,samples,getter,formatter){return `<div class="history-card"><h4>${title}</h4><div class="chart">${chartLine(samples,getter,formatter)}</div></div>`;}
      function detailView(n){const samples=state.metrics||[];const memoryValue=s=>{const total=Number(s.metrics?.memory_total_bytes||0);return total?Number(s.metrics?.memory_used_bytes||0)/total*100:0;};const networkValue=s=>(s.metrics?.networks||[]).reduce((total,item)=>total+Number(item.bytes_in||0)+Number(item.bytes_out||0),0);const diskValue=s=>diskOverallPercent({metrics:s.metrics});const checkRows=n.checks?.length?n.checks.map(c=>{const detail=c.type==='ping'?`${Number(c.latency_ms||0)} ms · 丢包 ${Number(c.packet_loss_percent||0).toFixed(1)}%`:c.type==='tls'?`${c.tls_expires_at_unix?fmtTime(Number(c.tls_expires_at_unix)*1000):'无到期时间'} · ${esc(c.tls_version||'TLS')}`:c.status==='up'?`${Number(c.latency_ms||0)} ms`:esc(c.message||'down');return `<div class="metric-row"><span>${esc(c.name)}</span><span class="check-status-line">${statusBadge(c.status==='up'?'online':c.status==='unknown'?'pending':'offline')}<span class="mono">${detail}</span></span><span class="mono">${esc(c.type)}</span></div>`;}).join(''):'<div class="muted" style="margin-top:8px">该节点未配置本地检查。</div>';return `<section class="panel" style="margin-top:16px"><div class="panel-head"><h3>${esc(n.name)} · 详情</h3><div class="actions"><label class="filter-select">范围<select id="metric-range"><option value="1"${state.metricsHours===1?' selected':''}>1 小时</option><option value="6"${state.metricsHours===6?' selected':''}>6 小时</option><option value="24"${state.metricsHours===24?' selected':''}>24 小时</option><option value="168"${state.metricsHours===168?' selected':''}>7 天</option><option value="720"${state.metricsHours===720?' selected':''}>30 天</option></select></label><button class="btn small primary" id="install-node"${n.status==='revoked'?' disabled':''}>生成安装命令</button><button class="btn small" id="rotate-token">轮换凭据</button>${n.status==='revoked'?'<button class="btn small" id="restore-node">恢复</button>':'<button class="btn small danger" id="revoke-node">撤销</button>'}</div></div><div class="panel-body"><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；需要失效旧 token 时，请使用独立的轮换操作。历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${esc(n.id)}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${esc(n.system?.hostname||'未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${esc(n.system?.os||'--')} / ${esc(n.system?.arch||'--')}</div></div><div><div class="meta-label">地址</div><div class="meta-value mono">${esc(n.last_ip||n.system?.ip||'--')}</div></div></div><div class="history-grid">${historyCard('CPU',samples,s=>s.metrics?.cpu_percent||0,v=>Number(v).toFixed(1)+'%')}${historyCard('内存',samples,memoryValue,v=>Number(v).toFixed(1)+'%')}${historyCard('磁盘',samples,diskValue,v=>Number(v).toFixed(1)+'%')}${historyCard('负载 1m',samples,s=>s.metrics?.load1||0,v=>Number(v).toFixed(2))}${historyCard('网络累计流量',samples,networkValue,v=>fmtBytes(v))}</div><div style="margin-top:22px"><div class="meta-label">服务检查</div>${checkRows}</div></div></section>`;}
@@ -133,6 +133,147 @@
         try { body = await response.json(); } catch (_) {}
         if (!response.ok) throw new Error(body?.error || response.statusText);
         return body;
+      };
+      const escapeChartText = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+      const homeMemoryPercent = sample => {
+        const total = Number(sample?.metrics?.memory_total_bytes || 0);
+        return total ? Number(sample.metrics.memory_used_bytes || 0) / total * 100 : 0;
+      };
+      const homeDiskPercent = sample => {
+        const disks = sample?.metrics?.disks || [];
+        const total = disks.reduce((sum, disk) => sum + Number(disk.total_bytes || 0), 0);
+        const used = disks.reduce((sum, disk) => sum + Number(disk.used_bytes || 0), 0);
+        return total ? used / total * 100 : 0;
+      };
+      const homeChartLine = (samples, getter, formatter) => {
+        const visible = (samples || []).slice(-72);
+        if (!visible.length) return '<div class="empty chart-empty">暂无历史指标</div>';
+        const values = visible.map(sample => {
+          const value = Number(getter(sample));
+          return Number.isFinite(value) ? value : 0;
+        });
+        let min = Math.min(...values);
+        let max = Math.max(...values);
+        let range = max - min;
+        if (range === 0) {
+          range = Math.max(Math.abs(max) * .2, 1);
+          min = Math.max(0, min - range / 2);
+          max += range / 2;
+        } else {
+          const padding = range * .1;
+          min = Math.max(0, min - padding);
+          max += padding;
+        }
+        const width = 640;
+        const height = 190;
+        const left = 42;
+        const right = 10;
+        const top = 12;
+        const bottom = 30;
+        const plotWidth = width - left - right;
+        const plotHeight = height - top - bottom;
+        const baseY = top + plotHeight;
+        const pointAt = (value, index) => {
+          const x = visible.length === 1 ? left + plotWidth / 2 : left + index / (visible.length - 1) * plotWidth;
+          const y = top + (max - value) / (max - min) * plotHeight;
+          return { x, y };
+        };
+        const points = values.map(pointAt);
+        const pointString = points.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
+        const areaPath = `M ${points[0].x.toFixed(2)} ${baseY.toFixed(2)} L ${pointString.replace(/,/g, ' ')} L ${points[points.length - 1].x.toFixed(2)} ${baseY.toFixed(2)} Z`;
+        const gridValues = [max, (max + min) / 2, min];
+        const grid = gridValues.map(value => {
+          const y = top + (max - value) / (max - min) * plotHeight;
+          return `<line class="chart-grid-line" x1="${left}" y1="${y.toFixed(2)}" x2="${width - right}" y2="${y.toFixed(2)}"></line><text class="chart-axis-label" x="${left - 8}" y="${(y + 3).toFixed(2)}" text-anchor="end">${escapeChartText(formatter(value))}</text>`;
+        }).join('');
+        const labelIndexes = [0, Math.floor((visible.length - 1) / 2), visible.length - 1].filter((index, position, all) => all.indexOf(index) === position);
+        const labels = labelIndexes.map(index => {
+          const date = new Date(visible[index].observed_at);
+          const label = Number.isNaN(date.getTime()) ? '--' : `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
+          const point = points[index];
+          return `<text class="chart-axis-label" x="${point.x.toFixed(2)}" y="${height - 7}" text-anchor="middle">${escapeChartText(label)}</text>`;
+        }).join('');
+        const circles = points.map((point, index) => {
+          const date = new Date(visible[index].observed_at);
+          const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
+          return `<circle class="chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"><title>${escapeChartText(timestamp)} · ${escapeChartText(formatter(values[index]))}</title></circle>`;
+        }).join('');
+        return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg>`;
+      };
+      const homeHistoryMarkup = samples => `<div class="history-grid"><div class="history-card"><h4>CPU</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.cpu_percent || 0, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>内存</h4><div class="chart">${homeChartLine(samples, homeMemoryPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>磁盘</h4><div class="chart">${homeChartLine(samples, homeDiskPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>负载 1m</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.load1 || 0, value => Number(value).toFixed(2))}</div></div></div>`;
+      let homeHistoryNodeID = '';
+      let homeHistoryHours = 24;
+      let homeHistorySerial = 0;
+      const homeHistoryNodes = page => [...page.querySelectorAll('.node-card[data-node]')].filter(card => !card.classList.contains('revoked')).map(card => ({ id: card.dataset.node, name: card.querySelector('.node-card-title strong')?.textContent?.trim() || card.dataset.node, online: card.classList.contains('online') }));
+      const loadHomeHistory = async panel => {
+        const select = panel.querySelector('#home-history-node');
+        const content = panel.querySelector('#home-history-content');
+        const id = select?.value || '';
+        if (!id) {
+          content.innerHTML = '<div class="empty">暂无可用节点历史指标</div>';
+          return;
+        }
+        const serial = ++homeHistorySerial;
+        panel.dataset.historyKey = id + ':' + homeHistoryHours;
+        content.innerHTML = '<div class="empty">正在加载历史指标...</div>';
+        try {
+          const result = await request('/api/nodes/' + encodeURIComponent(id) + '/metrics?hours=' + homeHistoryHours + '&limit=120');
+          if (serial !== homeHistorySerial || !panel.isConnected) return;
+          content.innerHTML = homeHistoryMarkup(result?.samples || []);
+        } catch (error) {
+          if (serial !== homeHistorySerial || !panel.isConnected) return;
+          content.innerHTML = '<div class="empty">历史指标加载失败：' + escapeChartText(error.message) + '</div>';
+        }
+      };
+      const syncHomeHistory = () => {
+        const page = document.querySelector('.private-page');
+        const wall = page?.querySelector('.node-wall');
+        if (!page || !wall) return;
+        let panel = page.querySelector('#home-history-panel');
+        if (!panel) {
+          panel = document.createElement('section');
+          panel.id = 'home-history-panel';
+          panel.className = 'panel';
+          panel.style.marginTop = '16px';
+          panel.innerHTML = '<div class="panel-head"><h3>资源趋势</h3><div class="actions"><label class="filter-select">节点<select id="home-history-node"></select></label><label class="filter-select">范围<select id="home-history-range"><option value="1">1 小时</option><option value="6">6 小时</option><option value="24">24 小时</option><option value="168">7 天</option></select></label></div></div><div class="panel-body"><div id="home-history-content"></div></div>';
+          panel.querySelector('.panel-head').style.flexWrap = 'wrap';
+          wall.after(panel);
+        }
+        const nodes = homeHistoryNodes(page);
+        const select = panel.querySelector('#home-history-node');
+        const range = panel.querySelector('#home-history-range');
+        const signature = nodes.map(node => node.id + ':' + node.name + ':' + node.online).join('|');
+        if (panel.dataset.nodeSignature !== signature) {
+          panel.dataset.nodeSignature = signature;
+          select.replaceChildren();
+          nodes.forEach(node => {
+            const option = document.createElement('option');
+            option.value = node.id;
+            option.textContent = node.name + (node.online ? ' · 在线' : ' · 离线');
+            select.append(option);
+          });
+          const preferred = nodes.find(node => node.id === homeHistoryNodeID) || nodes.find(node => node.online) || nodes[0];
+          homeHistoryNodeID = preferred?.id || '';
+          select.value = homeHistoryNodeID;
+        }
+        if (!select.dataset.bound) {
+          select.dataset.bound = 'true';
+          select.onchange = () => {
+            homeHistoryNodeID = select.value;
+            loadHomeHistory(panel);
+          };
+          range.onchange = () => {
+            homeHistoryHours = Number(range.value) || 24;
+            loadHomeHistory(panel);
+          };
+        }
+        range.value = String(homeHistoryHours);
+        if (!nodes.length) {
+          panel.querySelector('#home-history-content').innerHTML = '<div class="empty">暂无可用节点历史指标</div>';
+          return;
+        }
+        const key = homeHistoryNodeID + ':' + homeHistoryHours;
+        if (panel.dataset.historyKey !== key) loadHomeHistory(panel);
       };
       const showCredential = data => {
         const backdrop = document.createElement('div');
@@ -197,6 +338,84 @@
         backdrop.onclick = event => { if (event.target === backdrop) backdrop.remove(); };
         document.body.append(backdrop);
       };
+      const showNodeEditor = node => {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        const modal = document.createElement('section');
+        modal.className = 'modal';
+        const head = document.createElement('header');
+        head.className = 'modal-head';
+        const title = document.createElement('h3');
+        title.textContent = '编辑节点信息';
+        const close = document.createElement('button');
+        close.className = 'close';
+        close.type = 'button';
+        close.textContent = '×';
+        const body = document.createElement('div');
+        body.className = 'modal-body';
+        const note = document.createElement('div');
+        note.className = 'notice';
+        note.textContent = '修改名称、分组和标签只影响后台显示，不会改变探针凭据。';
+        const form = document.createElement('form');
+        form.className = 'form';
+        const field = (labelText, name, value, maxLength, placeholder) => {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'field';
+          const label = document.createElement('label');
+          label.textContent = labelText;
+          const input = document.createElement('input');
+          input.name = name;
+          input.value = value || '';
+          input.maxLength = maxLength;
+          input.placeholder = placeholder || '';
+          input.required = name === 'name';
+          wrapper.append(label, input);
+          return wrapper;
+        };
+        form.append(
+          field('显示名称', 'name', node.name, 128, '例如：东京应用服务器'),
+          field('分组', 'group', node.group, 64, 'production'),
+          field('标签', 'tags', (node.tags || []).join(', '), 200, 'web,linux')
+        );
+        const errorText = document.createElement('div');
+        errorText.className = 'error-text';
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        const cancel = document.createElement('button');
+        cancel.className = 'btn';
+        cancel.type = 'button';
+        cancel.textContent = '取消';
+        const save = document.createElement('button');
+        save.className = 'btn primary';
+        save.type = 'submit';
+        save.textContent = '保存';
+        actions.append(cancel, save);
+        form.append(errorText, actions);
+        head.append(title, close);
+        body.append(note, form);
+        modal.append(head, body);
+        backdrop.append(modal);
+        const dismiss = () => backdrop.remove();
+        close.onclick = dismiss;
+        cancel.onclick = dismiss;
+        backdrop.onclick = event => { if (event.target === backdrop) dismiss(); };
+        form.onsubmit = async event => {
+          event.preventDefault();
+          save.disabled = true;
+          errorText.textContent = '';
+          const data = Object.fromEntries(new FormData(form));
+          data.tags = String(data.tags || '').split(',').map(value => value.trim()).filter(Boolean);
+          try {
+            await request('/api/nodes/' + encodeURIComponent(node.id), { method: 'PUT', body: JSON.stringify(data) });
+            dismiss();
+            window.location.reload();
+          } catch (error) {
+            errorText.textContent = error.message;
+            save.disabled = false;
+          }
+        };
+        document.body.append(backdrop);
+      };
       const install = event => {
         if (event.target?.id !== 'install-node') return;
         event.preventDefault();
@@ -204,6 +423,14 @@
         const id = nodeID();
         if (!id) return;
         request('/api/nodes/' + encodeURIComponent(id) + '/install', { method: 'POST' }).then(showCredential).catch(error => window.alert(error.message));
+      };
+      const edit = event => {
+        if (event.target?.id !== 'edit-node') return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const id = nodeID();
+        if (!id) return;
+        request('/api/nodes/' + encodeURIComponent(id)).then(showNodeEditor).catch(error => window.alert(error.message));
       };
       const update = event => {
         if (event.target?.id !== 'update-node') return;
@@ -221,6 +448,14 @@
       };
       const decorate = () => {
         const installButton = document.getElementById('install-node');
+        if (installButton && !document.getElementById('edit-node')) {
+          const button = document.createElement('button');
+          button.id = 'edit-node';
+          button.className = 'btn small';
+          button.type = 'button';
+          button.textContent = '编辑信息';
+          installButton.before(button);
+        }
         if (installButton && !document.getElementById('update-node')) {
           const button = document.createElement('button');
           button.id = 'update-node';
@@ -244,8 +479,10 @@
             text.textContent = text.textContent.replace('不会向子节点发送 shell、脚本、配置或更新指令', '不会向子节点发送 shell、脚本或配置；更新只能使用签名发布物');
           }
         }
+        syncHomeHistory();
       };
       document.addEventListener('click', install, true);
+      document.addEventListener('click', edit, true);
       document.addEventListener('click', update, true);
       document.addEventListener('click', updateAll, true);
       new MutationObserver(decorate).observe(document.body, { childList: true, subtree: true });

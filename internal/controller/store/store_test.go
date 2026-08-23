@@ -35,6 +35,29 @@ func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeMetadata(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/metadata.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	node := model.Node{ID: "node_metadata", Name: "Before", Group: "old", Tags: []string{"one"}, Status: model.NodePending}
+	if err := st.CreateNode(ctx, node, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.UpdateNodeMetadata(ctx, node.ID, "After", "production", []string{"web", "linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "After" || got.Group != "production" || len(got.Tags) != 2 || got.Tags[0] != "web" || got.Tags[1] != "linux" {
+		t.Fatalf("updated node metadata = %#v", got)
+	}
+	if _, err := st.UpdateNodeMetadata(ctx, "missing", "Name", "", nil); err != ErrNodeNotFound {
+		t.Fatalf("missing node error = %v", err)
+	}
+}
+
 func TestAlertRulesChannelsStatesAndEvents(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(ctx, t.TempDir()+"/alerts.db")

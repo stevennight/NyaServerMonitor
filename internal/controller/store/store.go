@@ -345,6 +345,23 @@ func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash strin
 	return err
 }
 
+func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name, group string, tags []string) (model.Node, error) {
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return model.Node{}, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET name = ?, group_name = ?, tags_json = ?, updated_at = ?
+		WHERE id = ?`, name, group, string(tagsJSON), time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return model.Node{}, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return model.Node{}, ErrNodeNotFound
+	}
+	return s.GetNode(ctx, id)
+}
+
 func (s *Store) GetNode(ctx context.Context, id string) (model.Node, error) {
 	record, err := s.nodeRecord(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {

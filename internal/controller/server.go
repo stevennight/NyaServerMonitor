@@ -175,6 +175,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/nodes", s.withAuth(s.handleListNodes))
 	s.mux.HandleFunc("POST /api/nodes", s.withAuth(s.handleCreateNode))
 	s.mux.HandleFunc("GET /api/nodes/{id}", s.withAuth(s.handleGetNode))
+	s.mux.HandleFunc("PUT /api/nodes/{id}", s.withAuth(s.handleUpdateNodeMetadata))
 	s.mux.HandleFunc("GET /api/nodes/{id}/metrics", s.withAuth(s.handleNodeMetrics))
 	s.mux.HandleFunc("POST /api/nodes/{id}/rotate-token", s.withAuth(s.handleRotateToken))
 	s.mux.HandleFunc("POST /api/nodes/{id}/install", s.withAuth(s.handleNodeInstall))
@@ -831,29 +832,36 @@ func (s *Server) handleControllerInfo(w http.ResponseWriter, r *http.Request, se
 	})
 }
 
-type createNodeRequest struct {
+type nodeMetadataRequest struct {
 	Name  string   `json:"name"`
 	Group string   `json:"group,omitempty"`
 	Tags  []string `json:"tags,omitempty"`
 }
 
+func normalizeNodeMetadata(input *nodeMetadataRequest) error {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Group = strings.TrimSpace(input.Group)
+	if input.Name == "" || len(input.Name) > 128 || len(input.Group) > 64 || len(input.Tags) > 16 {
+		return errors.New("invalid node metadata")
+	}
+	for index, tag := range input.Tags {
+		input.Tags[index] = strings.TrimSpace(tag)
+		if input.Tags[index] == "" || len(input.Tags[index]) > 32 || strings.ContainsAny(input.Tags[index], "\r\n") {
+			return errors.New("invalid node tag")
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, session auth.Session) {
-	var input createNodeRequest
+	var input nodeMetadataRequest
 	if err := decodeJSON(w, r, 8192, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	input.Name = strings.TrimSpace(input.Name)
-	input.Group = strings.TrimSpace(input.Group)
-	if input.Name == "" || len(input.Name) > 128 || len(input.Group) > 64 || len(input.Tags) > 16 {
-		writeError(w, http.StatusBadRequest, "invalid node metadata")
+	if err := normalizeNodeMetadata(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	for _, tag := range input.Tags {
-		if len(tag) == 0 || len(tag) > 32 || strings.ContainsAny(tag, "\r\n") {
-			writeError(w, http.StatusBadRequest, "invalid node tag")
-			return
-		}
 	}
 	id, err := newOpaqueID("node", 16)
 	if err != nil {
@@ -877,6 +885,33 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, sessio
 	}
 	_ = s.store.AddAudit(r.Context(), session.Username, "node_created", id, map[string]any{"name": input.Name})
 	writeJSON(w, http.StatusCreated, nodeCredentialResponse(s.cfg, node, token))
+}
+
+func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	var input nodeMetadataRequest
+	if err := decodeJSON(w, r, 8192, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := normalizeNodeMetadata(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	node, err := s.store.UpdateNodeMetadata(r.Context(), r.PathValue("id"), input.Name, input.Group, input.Tags)
+	if errors.Is(err, store.ErrNodeNotFound) {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to update node metadata")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "node_metadata_updated", node.ID, map[string]any{
+		"name":  node.Name,
+		"group": node.Group,
+		"tags":  node.Tags,
+	})
+	writeJSON(w, http.StatusOK, node)
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, session auth.Session) {

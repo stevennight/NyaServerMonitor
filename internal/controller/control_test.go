@@ -84,6 +84,40 @@ func TestInstallCommandReusesEncryptedNodeToken(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeMetadataEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := NewServer(Config{SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+	cookie := setupTestAdmin(t, s)
+	const nodeID = "node_metadata"
+	if err := st.CreateNode(ctx, model.Node{ID: nodeID, Name: "Before", Status: model.NodePending}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/nodes/"+nodeID, strings.NewReader(`{"name":" After ","group":" production ","tags":[" web ","linux"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("update status: %d %s", response.Code, response.Body.String())
+	}
+	var updated model.Node
+	if err := json.Unmarshal(response.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "After" || updated.Group != "production" || len(updated.Tags) != 2 || updated.Tags[0] != "web" {
+		t.Fatalf("updated response = %#v", updated)
+	}
+	stored, err := st.GetNode(ctx, nodeID)
+	if err != nil || stored.Name != "After" || stored.Group != "production" {
+		t.Fatalf("stored node = %#v, err=%v", stored, err)
+	}
+}
+
 func TestNodeWebSocketAuthenticatesAndMarksNodeSeen(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
