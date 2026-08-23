@@ -58,6 +58,73 @@ func TestUpdateNodeMetadata(t *testing.T) {
 	}
 }
 
+func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/network.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	node := model.Node{ID: "node_network", Name: "Network node", Status: model.NodePending}
+	if err := st.CreateNode(ctx, node, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	report := model.Report{
+		ProtocolVersion: model.ProtocolVersion,
+		NodeID:          node.ID,
+		SentAtUnix:      time.Now().Unix(),
+		Sequence:        1,
+		AgentVersion:    "dev",
+		System:          model.SystemInfo{IP: "10.0.0.5"},
+	}
+	if err := st.UpdateReport(ctx, report, "198.51.100.10"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := st.ClaimCountryLookup(ctx, node.ID, "198.51.100.10")
+	if err != nil || !claimed {
+		t.Fatalf("first country lookup claim = %v, err=%v", claimed, err)
+	}
+	if err := st.SaveNodeCountry(ctx, node.ID, "198.51.100.10", "Exampleland", "EX"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = st.ClaimCountryLookup(ctx, node.ID, "198.51.100.10")
+	if err != nil || claimed {
+		t.Fatalf("same-IP country lookup claim = %v, err=%v", claimed, err)
+	}
+	got, err := st.GetNode(ctx, node.ID)
+	if err != nil || got.LastIP != "198.51.100.10" || got.Country != "Exampleland" || got.CountryCode != "EX" {
+		t.Fatalf("automatic network metadata = %#v, err=%v", got, err)
+	}
+	if err := st.UpdateReport(ctx, report, "203.0.113.20"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetNode(ctx, node.ID)
+	if err != nil || got.Country != "" || got.CountryCode != "" {
+		t.Fatalf("country was not cleared after IP change = %#v, err=%v", got, err)
+	}
+	claimed, err = st.ClaimCountryLookup(ctx, node.ID, "203.0.113.20")
+	if err != nil || !claimed {
+		t.Fatalf("changed-IP country lookup claim = %v, err=%v", claimed, err)
+	}
+	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "192.0.2.10", "Manual country"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateReport(ctx, report, "198.51.100.30"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetNode(ctx, node.ID)
+	if err != nil || got.IPOverride != "192.0.2.10" || got.CountryOverride != "Manual country" {
+		t.Fatalf("manual overrides were overwritten = %#v, err=%v", got, err)
+	}
+	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetNode(ctx, node.ID)
+	if err != nil || got.IPOverride != "" || got.CountryOverride != "" || got.LastIP != "198.51.100.30" {
+		t.Fatalf("manual overrides were not cleared = %#v, err=%v", got, err)
+	}
+}
+
 func TestAlertRulesChannelsStatesAndEvents(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(ctx, t.TempDir()+"/alerts.db")

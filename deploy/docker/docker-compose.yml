@@ -24,6 +24,7 @@ services:
       NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
       NYASM_NOTIFICATION_KEY: ${NYASM_NOTIFICATION_KEY:-}
       NYASM_NODE_TOKEN_KEY: ${NYASM_NODE_TOKEN_KEY:-}
+      NYASM_GEOIP_URL: ${NYASM_GEOIP_URL:-}
     volumes:
       - ../../data:/data
     ports:

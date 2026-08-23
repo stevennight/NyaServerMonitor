@@ -21,6 +21,10 @@ type Node struct {
 	Status            NodeStatus       `json:"status"`
 	AgentVersion      string           `json:"agent_version,omitempty"`
 	LastIP            string           `json:"last_ip,omitempty"`
+	IPOverride        string           `json:"ip_override,omitempty"`
+	Country           string           `json:"country,omitempty"`
+	CountryCode       string           `json:"country_code,omitempty"`
+	CountryOverride   string           `json:"country_override,omitempty"`
 	LastSeen          time.Time        `json:"last_seen,omitempty"`
 	FirstSeen         time.Time        `json:"first_seen,omitempty"`
 	CreatedAt         time.Time        `json:"created_at"`

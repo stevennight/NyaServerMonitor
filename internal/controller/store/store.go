@@ -95,6 +95,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			revoked INTEGER NOT NULL DEFAULT 0,
 			agent_version TEXT NOT NULL DEFAULT '',
 			last_ip TEXT NOT NULL DEFAULT '',
+			ip_override TEXT NOT NULL DEFAULT '',
+			country TEXT NOT NULL DEFAULT '',
+			country_code TEXT NOT NULL DEFAULT '',
+			country_lookup_ip TEXT NOT NULL DEFAULT '',
+			country_override TEXT NOT NULL DEFAULT '',
 			last_seen TEXT NOT NULL DEFAULT '',
 			first_seen TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
@@ -220,6 +225,11 @@ func (s *Store) ensureNodeColumns(ctx context.Context) error {
 	}
 	for name, definition := range map[string]string{
 		"token_ciphertext":    "TEXT NOT NULL DEFAULT ''",
+		"ip_override":         "TEXT NOT NULL DEFAULT ''",
+		"country":             "TEXT NOT NULL DEFAULT ''",
+		"country_code":        "TEXT NOT NULL DEFAULT ''",
+		"country_lookup_ip":   "TEXT NOT NULL DEFAULT ''",
+		"country_override":    "TEXT NOT NULL DEFAULT ''",
 		"desired_version":     "TEXT NOT NULL DEFAULT ''",
 		"update_status":       "TEXT NOT NULL DEFAULT ''",
 		"update_error":        "TEXT NOT NULL DEFAULT ''",
@@ -338,9 +348,11 @@ func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash strin
 		ciphertext = tokenCiphertext[0]
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-		node.ID, node.Name, node.Group, string(tags), tokenHash, ciphertext, node.Status,
+		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version,
+			last_ip, ip_override, country, country_code, country_lookup_ip, country_override, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, '', '', '', ?, ?, ?)`,
+		node.ID, node.Name, node.Group, string(tags), tokenHash, ciphertext, node.Status, node.AgentVersion,
+		node.IPOverride, node.CountryOverride,
 		node.CreatedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
@@ -353,6 +365,28 @@ func (s *Store) UpdateNodeMetadata(ctx context.Context, id, name, group string, 
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE nodes SET name = ?, group_name = ?, tags_json = ?, updated_at = ?
 		WHERE id = ?`, name, group, string(tagsJSON), time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return model.Node{}, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return model.Node{}, ErrNodeNotFound
+	}
+	return s.GetNode(ctx, id)
+}
+
+func (s *Store) UpdateNodeMetadataWithOverrides(ctx context.Context, id, name, group string, tags []string, ipOverride, countryOverride string) (model.Node, error) {
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return model.Node{}, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET name = ?, group_name = ?, tags_json = ?, ip_override = ?, country_override = ?,
+		country = CASE WHEN (CASE WHEN ? <> '' THEN ? ELSE last_ip END) <> (CASE WHEN ip_override <> '' THEN ip_override ELSE last_ip END) THEN '' ELSE country END,
+		country_code = CASE WHEN (CASE WHEN ? <> '' THEN ? ELSE last_ip END) <> (CASE WHEN ip_override <> '' THEN ip_override ELSE last_ip END) THEN '' ELSE country_code END,
+		updated_at = ? WHERE id = ?`,
+		name, group, string(tagsJSON), ipOverride, countryOverride,
+		ipOverride, ipOverride, ipOverride, ipOverride,
+		time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return model.Node{}, err
 	}
@@ -387,6 +421,7 @@ func (s *Store) GetNodeCredential(ctx context.Context, id string) (NodeCredentia
 func (s *Store) ListNodes(ctx context.Context) ([]model.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
+		       ip_override, country, country_code, country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
 		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes ORDER BY name COLLATE NOCASE, id`)
@@ -430,10 +465,12 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report, remoteIP 
 	defer rollback(tx)
 	result, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET status = ?, agent_version = ?, last_ip = ?, last_seen = ?,
+		country = CASE WHEN ip_override = '' AND last_ip <> ? THEN '' ELSE country END,
+		country_code = CASE WHEN ip_override = '' AND last_ip <> ? THEN '' ELSE country_code END,
 		first_seen = CASE WHEN first_seen = '' THEN ? ELSE first_seen END,
 		updated_at = ?, sequence = ?, system_json = ?, last_report_json = ?
 		WHERE id = ? AND revoked = 0`,
-		model.NodeOnline, report.AgentVersion, remoteIP, now, now, now, report.Sequence,
+		model.NodeOnline, report.AgentVersion, remoteIP, now, remoteIP, remoteIP, now, now, report.Sequence,
 		string(systemJSON), string(reportJSON), report.NodeID)
 	if err != nil {
 		return err
@@ -451,6 +488,56 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report, remoteIP 
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) ClaimCountryLookup(ctx context.Context, id, ip string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET country_lookup_ip = ?
+		WHERE id = ? AND revoked = 0
+		  AND (CASE WHEN ip_override <> '' THEN ip_override ELSE last_ip END) = ?
+		  AND country_lookup_ip <> ?`, ip, id, ip, ip)
+	if err != nil {
+		return false, err
+	}
+	if count, _ := result.RowsAffected(); count > 0 {
+		return true, nil
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM nodes WHERE id = ?`, id).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNodeNotFound
+	} else if err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (s *Store) SaveNodeCountry(ctx context.Context, id, ip, country, countryCode string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET country = ?, country_code = ?, updated_at = ?
+		WHERE id = ? AND revoked = 0
+		  AND (CASE WHEN ip_override <> '' THEN ip_override ELSE last_ip END) = ?
+		  AND country_lookup_ip = ?`,
+		country, countryCode, time.Now().UTC().Format(time.RFC3339Nano), id, ip, ip)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+func (s *Store) ResetCountryLookup(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET country_lookup_ip = ''
+		WHERE id = ? AND country = ''`, id)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
 }
 
 func (s *Store) nodeUpdateError(ctx context.Context, tx *sql.Tx, id string) error {
@@ -1005,6 +1092,7 @@ type nodeRecord struct {
 	Node            model.Node
 	TokenHash       string
 	TokenCiphertext string
+	CountryLookupIP string
 	Revoked         bool
 }
 
@@ -1013,6 +1101,7 @@ type scanner interface{ Scan(dest ...any) error }
 func (s *Store) nodeRecord(ctx context.Context, id string) (nodeRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
+		       ip_override, country, country_code, country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
 		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes WHERE id = ?`, id)
@@ -1026,7 +1115,9 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	var lastSeen, firstSeen, created, updated, systemJSON, reportJSON string
 	var updateStatus, updateRequestedAt, updateFinishedAt string
 	if err := row.Scan(&record.Node.ID, &record.Node.Name, &record.Node.Group, &tagsJSON, &record.TokenHash, &record.TokenCiphertext,
-		&status, &revoked, &record.Node.AgentVersion, &record.Node.LastIP, &lastSeen, &firstSeen,
+		&status, &revoked, &record.Node.AgentVersion, &record.Node.LastIP, &record.Node.IPOverride,
+		&record.Node.Country, &record.Node.CountryCode, &record.CountryLookupIP, &record.Node.CountryOverride,
+		&lastSeen, &firstSeen,
 		&created, &updated, &record.Node.Sequence, &systemJSON, &reportJSON, &record.Node.DesiredVersion,
 		&updateStatus, &record.Node.UpdateError, &updateRequestedAt, &updateFinishedAt); err != nil {
 		return nodeRecord{}, err

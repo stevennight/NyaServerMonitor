@@ -47,6 +47,7 @@ type Server struct {
 	sessions        *auth.Sessions
 	limiter         *auth.LoginLimiter
 	alerts          *alertEngine
+	geoIP           *geoIPLookup
 	mux             *http.ServeMux
 	nonces          *nonceCache
 	hub             *nodehub.Hub
@@ -100,6 +101,7 @@ func NewServer(cfg Config, st *store.Store) *Server {
 		mux:      http.NewServeMux(),
 		nonces:   newNonceCache(),
 		hub:      nodehub.New(),
+		geoIP:    newGeoIPLookup(cfg.GeoIPURL),
 	}
 	s.alerts = newAlertEngine(st, newSecretBox(cfg.NotificationKey), s.log)
 	s.routes()
@@ -833,9 +835,13 @@ func (s *Server) handleControllerInfo(w http.ResponseWriter, r *http.Request, se
 }
 
 type nodeMetadataRequest struct {
-	Name  string   `json:"name"`
-	Group string   `json:"group,omitempty"`
-	Tags  []string `json:"tags,omitempty"`
+	Name            string   `json:"name"`
+	Group           string   `json:"group,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	IPOverride      *string  `json:"ip_override"`
+	CountryOverride *string  `json:"country_override"`
+	IP              *string  `json:"ip"`
+	Country         *string  `json:"country"`
 }
 
 func normalizeNodeMetadata(input *nodeMetadataRequest) error {
@@ -853,6 +859,42 @@ func normalizeNodeMetadata(input *nodeMetadataRequest) error {
 	return nil
 }
 
+func normalizeNodeOverrides(input *nodeMetadataRequest) (string, string, error) {
+	ipValue := input.IPOverride
+	if ipValue == nil {
+		ipValue = input.IP
+	}
+	countryValue := input.CountryOverride
+	if countryValue == nil {
+		countryValue = input.Country
+	}
+	ipOverride := ""
+	if ipValue != nil {
+		ipOverride = strings.TrimSpace(*ipValue)
+		if len(ipOverride) > 64 || strings.ContainsAny(ipOverride, "\r\n\x00") {
+			return "", "", errors.New("invalid IP override")
+		}
+		if ipOverride != "" && net.ParseIP(strings.Trim(ipOverride, "[]")) == nil {
+			return "", "", errors.New("invalid IP override")
+		}
+		if parsed := net.ParseIP(strings.Trim(ipOverride, "[]")); parsed != nil {
+			if ipv4 := parsed.To4(); ipv4 != nil {
+				ipOverride = ipv4.String()
+			} else {
+				ipOverride = parsed.String()
+			}
+		}
+	}
+	countryOverride := ""
+	if countryValue != nil {
+		countryOverride = strings.TrimSpace(*countryValue)
+		if len(countryOverride) > 128 || strings.ContainsAny(countryOverride, "\r\n\x00") {
+			return "", "", errors.New("invalid country override")
+		}
+	}
+	return ipOverride, countryOverride, nil
+}
+
 func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, session auth.Session) {
 	var input nodeMetadataRequest
 	if err := decodeJSON(w, r, 8192, &input); err != nil {
@@ -860,6 +902,11 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, sessio
 		return
 	}
 	if err := normalizeNodeMetadata(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ipOverride, countryOverride, err := normalizeNodeOverrides(&input)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -878,7 +925,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusInternalServerError, "unable to protect node token")
 		return
 	}
-	node := model.Node{ID: id, Name: input.Name, Group: input.Group, Tags: input.Tags, Status: model.NodePending}
+	node := model.Node{ID: id, Name: input.Name, Group: input.Group, Tags: input.Tags, Status: model.NodePending, IPOverride: ipOverride, CountryOverride: countryOverride}
 	if err := s.store.CreateNode(r.Context(), node, sharedcrypto.HashToken(token), tokenCiphertext); err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to create node")
 		return
@@ -897,7 +944,27 @@ func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	node, err := s.store.UpdateNodeMetadata(r.Context(), r.PathValue("id"), input.Name, input.Group, input.Tags)
+	current, err := s.store.GetNode(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNodeNotFound) {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load node metadata")
+		return
+	}
+	ipOverride, countryOverride, err := normalizeNodeOverrides(&input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.IPOverride == nil && input.IP == nil {
+		ipOverride = current.IPOverride
+	}
+	if input.CountryOverride == nil && input.Country == nil {
+		countryOverride = current.CountryOverride
+	}
+	node, err := s.store.UpdateNodeMetadataWithOverrides(r.Context(), r.PathValue("id"), input.Name, input.Group, input.Tags, ipOverride, countryOverride)
 	if errors.Is(err, store.ErrNodeNotFound) {
 		writeError(w, http.StatusNotFound, "node not found")
 		return
@@ -907,10 +974,24 @@ func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), session.Username, "node_metadata_updated", node.ID, map[string]any{
-		"name":  node.Name,
-		"group": node.Group,
-		"tags":  node.Tags,
+		"name":             node.Name,
+		"group":            node.Group,
+		"tags":             node.Tags,
+		"ip_override":      node.IPOverride,
+		"country_override": node.CountryOverride,
 	})
+	shouldLookupCountry := current.IPOverride != node.IPOverride
+	if current.CountryOverride != "" && node.CountryOverride == "" && node.Country == "" {
+		if err := s.store.ResetCountryLookup(r.Context(), node.ID); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
+			s.log.Warn("reset node country lookup failed", "node_id", node.ID, "error", err)
+		}
+		shouldLookupCountry = true
+	}
+	if shouldLookupCountry {
+		if err := s.queueNodeCountryLookup(r.Context(), node.ID, displayNodeIP(node)); err != nil {
+			s.log.Warn("queue node country lookup after IP metadata change failed", "node_id", node.ID, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, node)
 }
 
@@ -1106,12 +1187,22 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.store.UpdateReport(r.Context(), report, remoteIP(r)); errors.Is(err, store.ErrNodeRevoked) || errors.Is(err, store.ErrNodeNotFound) {
+	observedIP := remoteIP(r)
+	if err := s.store.UpdateReport(r.Context(), report, observedIP); errors.Is(err, store.ErrNodeRevoked) || errors.Is(err, store.ErrNodeNotFound) {
 		writeError(w, http.StatusUnauthorized, "node is not authorized")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to save report")
 		return
+	}
+	lookupIP := observedIP
+	if node, err := s.store.GetNode(r.Context(), report.NodeID); err != nil {
+		s.log.Warn("load node IP for country lookup failed", "node_id", report.NodeID, "error", err)
+	} else if node.IPOverride != "" {
+		lookupIP = node.IPOverride
+	}
+	if err := s.queueNodeCountryLookup(r.Context(), report.NodeID, lookupIP); err != nil {
+		s.log.Warn("queue node country lookup failed", "node_id", report.NodeID, "error", err)
 	}
 	go func(nodeID string) {
 		if err := s.alerts.evaluateNode(context.Background(), nodeID); err != nil {
@@ -1120,6 +1211,37 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	}(report.NodeID)
 	// Deliberately return no configuration, command, URL, or shell content to the node.
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "server_time_unix": time.Now().Unix()})
+}
+
+func displayNodeIP(node model.Node) string {
+	if strings.TrimSpace(node.IPOverride) != "" {
+		return node.IPOverride
+	}
+	return node.LastIP
+}
+
+func (s *Server) queueNodeCountryLookup(ctx context.Context, nodeID, ip string) error {
+	if s.geoIP == nil || strings.TrimSpace(ip) == "" {
+		return nil
+	}
+	claimed, err := s.store.ClaimCountryLookup(ctx, nodeID, ip)
+	if err != nil || !claimed {
+		return err
+	}
+	if !eligibleGeoIP(net.ParseIP(strings.Trim(ip, "[]"))) {
+		return nil
+	}
+	go func() {
+		country, countryCode, err := s.geoIP.lookup(context.Background(), ip)
+		if err != nil {
+			s.log.Warn("node country lookup failed", "node_id", nodeID, "ip", ip, "error", err)
+			return
+		}
+		if err := s.store.SaveNodeCountry(context.Background(), nodeID, ip, country, countryCode); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
+			s.log.Warn("save node country failed", "node_id", nodeID, "ip", ip, "error", err)
+		}
+	}()
+	return nil
 }
 
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {

@@ -19,6 +19,7 @@ type Config struct {
 	LogLevel         string
 	NotificationKey  string
 	NodeTokenKey     string
+	GeoIPURL         string
 	SessionLifetime  time.Duration
 	OfflineAfter     time.Duration
 	MetricsRetention time.Duration
@@ -36,6 +37,7 @@ func parseConfig(args []string) (Config, error) {
 		LogLevel:         env("NYASM_LOG_LEVEL", "info"),
 		NotificationKey:  env("NYASM_NOTIFICATION_KEY", ""),
 		NodeTokenKey:     env("NYASM_NODE_TOKEN_KEY", ""),
+		GeoIPURL:         env("NYASM_GEOIP_URL", defaultGeoIPURL),
 		SessionLifetime:  24 * time.Hour,
 		OfflineAfter:     90 * time.Second,
 		MetricsRetention: 30 * 24 * time.Hour,
@@ -48,6 +50,7 @@ func parseConfig(args []string) (Config, error) {
 	flags.StringVar(&cfg.NodeBinaryPath, "node-binary", cfg.NodeBinaryPath, "path to the node binary served by the installer")
 	flags.StringVar(&cfg.NodeBinaryDir, "node-binary-dir", cfg.NodeBinaryDir, "directory containing target node binaries")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level")
+	flags.StringVar(&cfg.GeoIPURL, "geoip-url", cfg.GeoIPURL, "country lookup URL containing {ip}; empty disables lookup")
 	flags.DurationVar(&cfg.SessionLifetime, "session-lifetime", cfg.SessionLifetime, "admin session lifetime")
 	flags.DurationVar(&cfg.OfflineAfter, "offline-after", cfg.OfflineAfter, "time without a report before a node is offline")
 	flags.DurationVar(&cfg.MetricsRetention, "metrics-retention", cfg.MetricsRetention, "metric history retention")

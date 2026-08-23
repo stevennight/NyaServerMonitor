@@ -19,6 +19,8 @@
 - 在验签之后才解析报告并写入 SQLite。
 - 对每次报告检查节点是否已撤销。
 
+报告来源地址作为节点的自动出口 IP 保存；节点本机报告中的网卡 IP 可能是内网地址，二者不会混用。国家/地区识别只在有效展示 IP 变化时执行一次，并在数据库中记录已尝试的 IP；人工 IP 或国家/地区覆盖不会被自动上报或识别结果替换，直到管理员清空覆盖值。默认 GeoIP 服务是 `https://ipwho.is/{ip}`，它会接收节点公网 IP；高隐私部署应通过 `NYASM_GEOIP_URL` 配置自建服务，或使用启动参数 `--geoip-url ""` 关闭该功能。
+
 token 只在创建、显式轮换或管理员请求安装命令的受保护响应中出现，节点列表、节点详情、审计和指标接口不会返回 token。若没有配置 `NYASM_NODE_TOKEN_KEY`，旧节点无法重新生成安装命令，只能显式轮换一次。生产环境必须通过 Caddy、反向代理或直接 HTTPS 暴露主节点，并限制管理面板访问来源。
 
 节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；该子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
