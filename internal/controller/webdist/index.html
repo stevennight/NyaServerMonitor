@@ -145,6 +145,13 @@
         return body;
       };
       const escapeChartText = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+      const formatBytes = value => {
+        const number = Number(value || 0);
+        if (!number) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const index = Math.min(units.length - 1, Math.floor(Math.log(number) / Math.log(1024)));
+        return (number / Math.pow(1024, index)).toFixed(index ? 1 : 0) + ' ' + units[index];
+      };
       const homeMemoryPercent = sample => {
         const total = Number(sample?.metrics?.memory_total_bytes || 0);
         return total ? Number(sample.metrics.memory_used_bytes || 0) / total * 100 : 0;
@@ -211,7 +218,7 @@
         return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg>`;
       };
       const homeNetworkRateSamples = (samples, direction) => { const list = samples || []; return list.map((sample, index) => { const previous = list[index - 1]; if (!previous) return { ...sample, network_rate: 0 }; const current = (sample.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const prior = (previous.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const elapsed = (new Date(sample.observed_at).getTime() - new Date(previous.observed_at).getTime()) / 1000; return { ...sample, network_rate: elapsed > 0 && current >= prior ? (current - prior) / elapsed : 0 }; }); };
-      const homeHistoryMarkup = samples => `<div class="history-grid"><div class="history-card"><h4>CPU</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.cpu_percent || 0, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>内存</h4><div class="chart">${homeChartLine(samples, homeMemoryPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>磁盘</h4><div class="chart">${homeChartLine(samples, homeDiskPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>负载 1m</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.load1 || 0, value => Number(value).toFixed(2))}</div></div><div class="history-card"><h4>网络入站速率</h4><div class="chart">${homeChartLine(homeNetworkRateSamples(samples, 'in'), sample => sample.network_rate || 0, value => fmtBytes(value) + '/s')}</div></div><div class="history-card"><h4>网络出站速率</h4><div class="chart">${homeChartLine(homeNetworkRateSamples(samples, 'out'), sample => sample.network_rate || 0, value => fmtBytes(value) + '/s')}</div></div></div>`;
+      const homeHistoryMarkup = samples => `<div class="history-grid"><div class="history-card"><h4>CPU</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.cpu_percent || 0, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>内存</h4><div class="chart">${homeChartLine(samples, homeMemoryPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>磁盘</h4><div class="chart">${homeChartLine(samples, homeDiskPercent, value => Number(value).toFixed(1) + '%')}</div></div><div class="history-card"><h4>负载 1m</h4><div class="chart">${homeChartLine(samples, sample => sample.metrics?.load1 || 0, value => Number(value).toFixed(2))}</div></div><div class="history-card"><h4>网络入站速率</h4><div class="chart">${homeChartLine(homeNetworkRateSamples(samples, 'in'), sample => sample.network_rate || 0, value => formatBytes(value) + '/s')}</div></div><div class="history-card"><h4>网络出站速率</h4><div class="chart">${homeChartLine(homeNetworkRateSamples(samples, 'out'), sample => sample.network_rate || 0, value => formatBytes(value) + '/s')}</div></div></div>`;
       let homeHistoryNodeID = '';
       let homeHistoryHours = 24;
       let homeHistorySerial = 0;
