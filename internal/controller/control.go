@@ -29,6 +29,8 @@ const (
 	maxNodeVersionBytes              = 128
 	maxNodeMetadataBytes             = 256
 	maxNodeUpdateErrorBytes          = 2048
+	maxTelemetryNetworks             = 256
+	maxTelemetryRate                 = uint64(1) << 62
 )
 
 func (s *Server) withNode(next func(http.ResponseWriter, *http.Request, model.Node)) http.HandlerFunc {
@@ -206,6 +208,8 @@ func (s *Server) handleNodeWS(w http.ResponseWriter, r *http.Request, node model
 					s.log.Warn("save node update report failed", "node_id", node.ID, "error", err)
 				}
 			}
+		case "telemetry":
+			s.telemetry.Publish(*message.Telemetry)
 		case "update_status":
 			if err := s.store.UpdateNodeReport(r.Context(), node.ID, *message.UpdateReport); err != nil {
 				s.log.Warn("save node update report failed", "node_id", node.ID, "error", err)
@@ -238,8 +242,43 @@ func validateNodeControlMessage(expectedID string, message sharedprotocol.Contro
 			return errors.New("update status is required")
 		}
 		return validateNodeUpdateReport(*message.UpdateReport)
+	case "telemetry":
+		return validateLiveTelemetry(expectedID, message.Telemetry)
 	default:
 		return fmt.Errorf("unsupported node websocket message type %q", message.Type)
+	}
+	return nil
+}
+
+func validateLiveTelemetry(expectedID string, telemetry *model.LiveTelemetry) error {
+	if telemetry == nil {
+		return errors.New("telemetry is required")
+	}
+	if telemetry.NodeID != expectedID {
+		return errors.New("telemetry node id does not match websocket credential")
+	}
+	if telemetry.Sequence == 0 {
+		return errors.New("telemetry sequence is required")
+	}
+	now := time.Now().UnixMilli()
+	if telemetry.ObservedAtUnixMilli < now-5*60*1000 || telemetry.ObservedAtUnixMilli > now+5*60*1000 {
+		return errors.New("telemetry timestamp is stale")
+	}
+	if len(telemetry.Networks) > maxTelemetryNetworks {
+		return errors.New("too many telemetry network metrics")
+	}
+	seen := make(map[string]struct{}, len(telemetry.Networks))
+	for _, network := range telemetry.Networks {
+		if err := validateNodeText("telemetry network name", network.Name, maxNodeMetadataBytes, false); err != nil {
+			return err
+		}
+		if _, exists := seen[network.Name]; exists {
+			return errors.New("duplicate telemetry network name")
+		}
+		seen[network.Name] = struct{}{}
+		if network.BytesInPerSecond > maxTelemetryRate || network.BytesOutPerSecond > maxTelemetryRate {
+			return errors.New("telemetry network rate is too large")
+		}
 	}
 	return nil
 }

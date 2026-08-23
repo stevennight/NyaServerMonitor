@@ -19,6 +19,10 @@ func (c *Collector) Collect() (model.MetricsSnapshot, error) {
 	return collectPlatform(&c.state)
 }
 
+func (c *Collector) CollectLive() (model.LiveTelemetry, error) {
+	return collectLivePlatform(&c.state)
+}
+
 func SystemInfo() model.SystemInfo {
 	hostname, _ := os.Hostname()
 	return model.SystemInfo{

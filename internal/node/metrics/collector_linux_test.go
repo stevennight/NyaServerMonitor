@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPhysicalDiskNamesCollapsePartitions(t *testing.T) {
@@ -41,5 +42,14 @@ func TestPhysicalDiskNamesCollapsePartitions(t *testing.T) {
 func TestDecodeMountInfoPath(t *testing.T) {
 	if got := decodeMountInfoPath(`/srv/data\040with\011tabs`); got != "/srv/data with\ttabs" {
 		t.Fatalf("unexpected decoded mount path: %q", got)
+	}
+}
+
+func TestBytesPerSecond(t *testing.T) {
+	if got := bytesPerSecond(4096, 2*time.Second); got != 2048 {
+		t.Fatalf("expected 2048 bytes per second, got %d", got)
+	}
+	if got := bytesPerSecond(4096, 0); got != 0 {
+		t.Fatalf("expected zero rate for zero elapsed time, got %d", got)
 	}
 }

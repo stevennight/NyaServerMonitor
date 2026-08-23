@@ -68,6 +68,8 @@ func controlLoop(ctx context.Context, client *client, cfg Config, log *slog.Logg
 
 		heartbeatDone := make(chan struct{})
 		go controlHeartbeat(connCtx, conn, cfg, write, log, heartbeatDone)
+		telemetryDone := make(chan struct{})
+		go controlTelemetry(connCtx, conn, cfg, write, log, telemetryDone)
 
 		for {
 			var message sharedprotocol.ControlMessage
@@ -101,6 +103,7 @@ func controlLoop(ctx context.Context, client *client, cfg Config, log *slog.Logg
 		cancel()
 		_ = conn.CloseNow()
 		<-heartbeatDone
+		<-telemetryDone
 		if !sleepContext(ctx, backoff) {
 			return
 		}
@@ -134,6 +137,45 @@ func controlHeartbeat(ctx context.Context, conn *websocket.Conn, cfg Config, wri
 				return
 			}
 			cancel()
+		}
+	}
+}
+
+func controlTelemetry(ctx context.Context, conn *websocket.Conn, cfg Config, write func(sharedprotocol.ControlMessage) error, log *slog.Logger, done chan<- struct{}) {
+	defer close(done)
+	interval := cfg.LiveInterval
+	if interval <= 0 {
+		interval = defaultLiveInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	collector := metrics.New()
+	var sequence uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			telemetry, err := collector.CollectLive()
+			if err != nil {
+				logControlFailure(log, ctx, "live telemetry collection failed", err)
+				continue
+			}
+			sequence++
+			message := sharedprotocol.ControlMessage{
+				Type:   "telemetry",
+				NodeID: cfg.NodeID,
+				Telemetry: &model.LiveTelemetry{
+					NodeID:              cfg.NodeID,
+					Sequence:            sequence,
+					ObservedAtUnixMilli: time.Now().UnixMilli(),
+					Networks:            telemetry.Networks,
+				},
+			}
+			if err := write(message); err != nil {
+				logControlFailure(log, ctx, "live telemetry write failed", err)
+				return
+			}
 		}
 	}
 }

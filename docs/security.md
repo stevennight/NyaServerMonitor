@@ -4,7 +4,7 @@
 
 主节点和子节点是两个不同的安全域。主节点保存管理员会话、节点 ID 和 token 派生值；子节点保存自己的 token 和本地健康检查配置。主节点不保存 SSH 私钥，不挂载 Docker socket，不连接子节点的 SSH/WinRM，也不提供远程命令接口。
 
-子节点只主动发起连接。指标使用 `POST /api/agent/v1/report`，响应仍只有接受结果和服务器时间；另有一个 node 主动建立的 `ws/wss /api/node/ws` 控制连接，只允许固定的 hello、heartbeat、update_status 和签名 update 消息。探针不会把主节点响应解析成配置、命令、URL 或脚本。
+子节点只主动发起连接。指标历史使用 `POST /api/agent/v1/report`，响应仍只有接受结果和服务器时间；另有一个 node 主动建立的 `ws/wss /api/node/ws` 控制连接，允许固定的 hello、heartbeat、telemetry、update_status 和签名 update 消息。telemetry 只包含经过校验的网络累计计数和速率，controller 不把它高频写入数据库。管理员页面通过需要会话的 `GET /api/telemetry/stream` SSE 接收实时值。探针不会把主节点响应解析成配置、命令、URL 或脚本。
 
 ## 报告认证
 

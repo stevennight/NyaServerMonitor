@@ -21,9 +21,12 @@ type Config struct {
 	NodeBinaryPath     string
 	LogLevel           string
 	Interval           time.Duration
+	LiveInterval       time.Duration
 	HTTPTimeout        time.Duration
 	InsecureSkipVerify bool
 }
+
+const defaultLiveInterval = 2 * time.Second
 
 func parseConfig(args []string) (Config, error) {
 	cfg := Config{
@@ -35,6 +38,7 @@ func parseConfig(args []string) (Config, error) {
 		NodeBinaryPath: env("NYASM_NODE_BINARY", defaultNodeBinaryPath),
 		LogLevel:       env("NYASM_LOG_LEVEL", "info"),
 		Interval:       15 * time.Second,
+		LiveInterval:   defaultLiveInterval,
 		HTTPTimeout:    20 * time.Second,
 	}
 	flags := flag.NewFlagSet("nyasm-node", flag.ContinueOnError)
@@ -46,6 +50,7 @@ func parseConfig(args []string) (Config, error) {
 	flags.StringVar(&cfg.NodeBinaryPath, "node-binary", cfg.NodeBinaryPath, "node binary path used by the fixed updater")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level")
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "report interval")
+	flags.DurationVar(&cfg.LiveInterval, "live-interval", cfg.LiveInterval, "live telemetry interval")
 	flags.DurationVar(&cfg.HTTPTimeout, "http-timeout", cfg.HTTPTimeout, "report HTTP timeout")
 	flags.BoolVar(&cfg.InsecureSkipVerify, "insecure-skip-verify", false, "disable TLS certificate verification; development only")
 	if err := flags.Parse(args); err != nil {
@@ -80,6 +85,9 @@ func (c Config) validate() error {
 	}
 	if c.Interval < 5*time.Second || c.Interval > 24*time.Hour {
 		return errors.New("interval must be between 5s and 24h")
+	}
+	if c.LiveInterval < time.Second || c.LiveInterval > time.Minute {
+		return errors.New("live-interval must be between 1s and 1m")
 	}
 	if c.HTTPTimeout < time.Second || c.HTTPTimeout > 2*time.Minute {
 		return errors.New("http-timeout must be between 1s and 2m")

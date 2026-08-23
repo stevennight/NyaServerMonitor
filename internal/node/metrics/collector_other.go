@@ -11,3 +11,7 @@ func platformKernel() string { return "" }
 func collectPlatform(state *platformState) (model.MetricsSnapshot, error) {
 	return model.MetricsSnapshot{}, nil
 }
+
+func collectLivePlatform(state *platformState) (model.LiveTelemetry, error) {
+	return model.LiveTelemetry{}, nil
+}

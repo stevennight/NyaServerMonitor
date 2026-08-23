@@ -137,6 +137,19 @@ type NetworkMetric struct {
 	PacketsOut uint64 `json:"packets_out"`
 }
 
+type LiveNetworkMetric struct {
+	Name              string `json:"name"`
+	BytesInPerSecond  uint64 `json:"bytes_in_per_second"`
+	BytesOutPerSecond uint64 `json:"bytes_out_per_second"`
+}
+
+type LiveTelemetry struct {
+	NodeID              string              `json:"node_id"`
+	Sequence            uint64              `json:"sequence"`
+	ObservedAtUnixMilli int64               `json:"observed_at_unix_milli"`
+	Networks            []LiveNetworkMetric `json:"networks,omitempty"`
+}
+
 type ServiceCheck struct {
 	ID                string  `json:"id"`
 	Name              string  `json:"name"`

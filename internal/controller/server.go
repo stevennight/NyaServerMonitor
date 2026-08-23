@@ -51,6 +51,7 @@ type Server struct {
 	mux             *http.ServeMux
 	nonces          *nonceCache
 	hub             *nodehub.Hub
+	telemetry       *telemetryHub
 	nodeSocketMu    sync.Mutex
 	releaseMu       sync.Mutex
 	releaseCache    model.SignedNodeRelease
@@ -92,16 +93,17 @@ func (c *nonceCache) Claim(nodeID, nonce string, now time.Time) bool {
 
 func NewServer(cfg Config, st *store.Store) *Server {
 	s := &Server{
-		cfg:      cfg,
-		log:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})),
-		store:    st,
-		tokenBox: newSecretBox(cfg.NodeTokenKey),
-		sessions: auth.NewSessions(cfg.SessionLifetime),
-		limiter:  auth.NewLoginLimiter(),
-		mux:      http.NewServeMux(),
-		nonces:   newNonceCache(),
-		hub:      nodehub.New(),
-		geoIP:    newGeoIPLookup(cfg.GeoIPURL),
+		cfg:       cfg,
+		log:       slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})),
+		store:     st,
+		tokenBox:  newSecretBox(cfg.NodeTokenKey),
+		sessions:  auth.NewSessions(cfg.SessionLifetime),
+		limiter:   auth.NewLoginLimiter(),
+		mux:       http.NewServeMux(),
+		nonces:    newNonceCache(),
+		hub:       nodehub.New(),
+		telemetry: newTelemetryHub(),
+		geoIP:     newGeoIPLookup(cfg.GeoIPURL),
 	}
 	s.alerts = newAlertEngine(st, newSecretBox(cfg.NotificationKey), s.log)
 	s.routes()
@@ -165,6 +167,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/settings/totp/disable", s.withAuth(s.handleTOTPDisable))
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/dashboard", s.withAuth(s.handleDashboard))
+	s.mux.HandleFunc("GET /api/telemetry/stream", s.withAuth(s.handleTelemetryStream))
 	s.mux.HandleFunc("GET /api/audit", s.withAuth(s.handleAudit))
 	s.mux.HandleFunc("GET /api/alerts", s.withAuth(s.handleAlerts))
 	s.mux.HandleFunc("GET /api/alerts/events", s.withAuth(s.handleAlertEvents))
@@ -190,8 +193,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /downloads/nyasm-node/manifest", s.handleDownloadNodeReleaseManifest)
 	s.mux.HandleFunc("GET /downloads/nyasm-node/signature", s.handleDownloadNodeBinarySignature)
 	s.mux.HandleFunc("GET /api/node/ws", s.withNode(s.handleNodeWS))
-	// Reports remain a signed, one-way data endpoint. The WebSocket only carries
-	// heartbeats and the fixed signed update message.
+	// Reports remain a signed, durable data endpoint. The node WebSocket carries
+	// heartbeats, live telemetry, and the fixed signed update message.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)
 	s.mux.HandleFunc("/", s.handleSPA)
 }

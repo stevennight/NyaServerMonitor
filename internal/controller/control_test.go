@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -171,6 +172,94 @@ func TestNodeWebSocketAuthenticatesAndMarksNodeSeen(t *testing.T) {
 	}
 	node, _ := st.GetNode(ctx, "node_ws")
 	t.Fatalf("node was not marked online: %#v", node)
+}
+
+func TestNodeWebSocketTelemetryReachesAuthenticatedStream(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	token := strings.Repeat("t", 32)
+	if err := st.CreateNode(ctx, model.Node{ID: "node_telemetry", Name: "Telemetry node", Status: model.NodePending}, sharedcrypto.HashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+	cookie := setupTestAdmin(t, s)
+	server := httptest.NewServer(s.mux)
+	defer server.Close()
+
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+	request, err := http.NewRequestWithContext(streamCtx, http.MethodGet, server.URL+"/api/telemetry/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(cookie)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("telemetry stream status: %d", response.StatusCode)
+	}
+	reader := bufio.NewReader(response.Body)
+	for i := 0; i < 2; i++ {
+		if _, err := reader.ReadString('\n'); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := newTestNodeWS(ctx, server.URL, "node_telemetry", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "test complete")
+	if err := wsjson.Write(ctx, conn, sharedprotocol.ControlMessage{Type: "hello", NodeID: "node_telemetry", Version: "v0.1.0", System: model.SystemInfo{OS: "linux", Arch: "amd64"}}); err != nil {
+		t.Fatal(err)
+	}
+	telemetry := model.LiveTelemetry{
+		NodeID:              "node_telemetry",
+		Sequence:            1,
+		ObservedAtUnixMilli: time.Now().UnixMilli(),
+		Networks: []model.LiveNetworkMetric{{
+			Name:              "eth0",
+			BytesInPerSecond:  2048,
+			BytesOutPerSecond: 1024,
+		}},
+	}
+	if err := wsjson.Write(ctx, conn, sharedprotocol.ControlMessage{Type: "telemetry", NodeID: "node_telemetry", Telemetry: &telemetry}); err != nil {
+		t.Fatal(err)
+	}
+
+	event := make(chan string, 1)
+	go func() {
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				event <- "read error: " + readErr.Error()
+				return
+			}
+			if strings.HasPrefix(line, "data: ") {
+				event <- strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+				return
+			}
+		}
+	}()
+	select {
+	case data := <-event:
+		var received model.LiveTelemetry
+		if err := json.Unmarshal([]byte(data), &received); err != nil {
+			t.Fatal(err)
+		}
+		if received.NodeID != telemetry.NodeID || received.Networks[0].BytesInPerSecond != 2048 || received.Networks[0].BytesOutPerSecond != 1024 {
+			t.Fatalf("unexpected telemetry event: %#v", received)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for telemetry event")
+	}
 }
 
 func TestNodeWebSocketReceivesSignedUpdate(t *testing.T) {

@@ -12,13 +12,23 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"nyaservermonitor/internal/shared/model"
 )
 
 type platformState struct {
-	previousTotal uint64
-	previousIdle  uint64
+	previousTotal     uint64
+	previousIdle      uint64
+	previousNetworks  map[string]networkCounter
+	previousNetworkAt time.Time
+}
+
+type networkCounter struct {
+	bytesIn    uint64
+	bytesOut   uint64
+	packetsIn  uint64
+	packetsOut uint64
 }
 
 func platformKernel() string {
@@ -35,10 +45,15 @@ func collectPlatform(state *platformState) (model.MetricsSnapshot, error) {
 	readLoad(&snapshot)
 	readMemory(&snapshot)
 	readUptime(&snapshot)
-	readNetwork(&snapshot)
+	readNetwork(&snapshot, state)
 	readDisks(&snapshot)
 	snapshot.ProcessCount = processCount()
 	return snapshot, nil
+}
+
+func collectLivePlatform(state *platformState) (model.LiveTelemetry, error) {
+	snapshot := model.MetricsSnapshot{}
+	return model.LiveTelemetry{Networks: readNetwork(&snapshot, state)}, nil
 }
 
 func readCPU(snapshot *model.MetricsSnapshot, state *platformState) {
@@ -143,12 +158,17 @@ func readUptime(snapshot *model.MetricsSnapshot) {
 	}
 }
 
-func readNetwork(snapshot *model.MetricsSnapshot) {
+func readNetwork(snapshot *model.MetricsSnapshot, state *platformState) []model.LiveNetworkMetric {
 	file, err := os.Open("/proc/net/dev")
 	if err != nil {
-		return
+		return nil
 	}
 	defer file.Close()
+	now := time.Now()
+	elapsed := now.Sub(state.previousNetworkAt)
+	previous := state.previousNetworks
+	next := make(map[string]networkCounter)
+	rates := make([]model.LiveNetworkMetric, 0)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -171,8 +191,30 @@ func readNetwork(snapshot *model.MetricsSnapshot) {
 		if errIn != nil || errInPackets != nil || errOut != nil || errOutPackets != nil {
 			continue
 		}
-		snapshot.Networks = append(snapshot.Networks, model.NetworkMetric{Name: name, BytesIn: inBytes, BytesOut: outBytes, PacketsIn: inPackets, PacketsOut: outPackets})
+		metric := model.NetworkMetric{Name: name, BytesIn: inBytes, BytesOut: outBytes, PacketsIn: inPackets, PacketsOut: outPackets}
+		liveMetric := model.LiveNetworkMetric{Name: name}
+		if previousMetric, ok := previous[name]; ok && elapsed > 0 && inBytes >= previousMetric.bytesIn && outBytes >= previousMetric.bytesOut {
+			liveMetric.BytesInPerSecond = bytesPerSecond(inBytes-previousMetric.bytesIn, elapsed)
+			liveMetric.BytesOutPerSecond = bytesPerSecond(outBytes-previousMetric.bytesOut, elapsed)
+		}
+		snapshot.Networks = append(snapshot.Networks, metric)
+		rates = append(rates, liveMetric)
+		next[name] = networkCounter{bytesIn: inBytes, bytesOut: outBytes, packetsIn: inPackets, packetsOut: outPackets}
 	}
+	state.previousNetworkAt = now
+	state.previousNetworks = next
+	return rates
+}
+
+func bytesPerSecond(delta uint64, elapsed time.Duration) uint64 {
+	if delta == 0 || elapsed <= 0 {
+		return 0
+	}
+	rate := float64(delta) / elapsed.Seconds()
+	if rate >= float64(^uint64(0)) {
+		return ^uint64(0)
+	}
+	return uint64(rate + 0.5)
 }
 
 func readDisks(snapshot *model.MetricsSnapshot) {

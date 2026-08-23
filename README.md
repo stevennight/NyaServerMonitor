@@ -14,7 +14,7 @@
               node agent
 ```
 
-子节点没有监听管理端口。node 只主动连接主节点：指标仍通过签名 HTTP 上报，WebSocket 只承载心跳、更新状态和已签名 node 更新包。主节点不能通过本项目向子节点发送 shell、脚本、任意配置或任意命令；健康检查配置保存在子节点本地。
+子节点没有监听管理端口。node 只主动连接主节点：指标历史仍通过签名 HTTP 上报，node WebSocket 另外承载心跳、实时网络遥测、更新状态和已签名 node 更新包；管理员监控页通过认证 SSE 接收实时遥测。主节点不能通过本项目向子节点发送 shell、脚本、任意配置或任意命令；健康检查配置保存在子节点本地。
 
 初版已包含：
 
@@ -150,11 +150,11 @@ NONCE
 SHA256(BODY)
 ```
 
-签名密钥是 token 的 SHA-256 派生值，数据库保存派生值；如果配置 `NYASM_NODE_TOKEN_KEY`，还会保存 AES-GCM 加密 token，用于管理员重新生成安装命令。数据库和 key 都必须作为机密备份；旧数据库只有哈希，无法恢复旧 token，迁移后需要显式轮换一次。token 轮换后旧 token 立即失效；撤销节点后报告和 WebSocket 都会被拒绝。主节点收到的报告字段是固定 Go 结构，未知字段、过大数组、异常数值和过期时间都会被拒绝。
+签名密钥是 token 的 SHA-256 派生值，数据库保存派生值；如果配置 `NYASM_NODE_TOKEN_KEY`，还会保存 AES-GCM 加密 token，用于管理员重新生成安装命令。数据库和 key 都必须作为机密备份；旧数据库只有哈希，无法恢复旧 token，迁移后需要显式轮换一次。token 轮换后旧 token 立即失效；撤销节点后报告和 WebSocket 都会被拒绝。主节点收到的报告和实时遥测字段都有固定 Go 结构、大小限制和时间校验，未知报告字段、过大数组、异常数值和过期请求都会被拒绝。
 
 主控更新流程是固定且单向授权的：管理员请求某个版本后，controller 通过 node 主动建立的 WebSocket 下发版本、manifest、manifest 签名和公钥标识；node 先验证 Ed25519 签名、版本、当前平台、SHA256 和文件大小，再写入受保护的更新请求文件。固定的 `nyasm-node-update.path` 只会调用固定的 `nyasm-node update`，下载固定 controller 路径的 gzip 二进制，完成校验后原子替换 `/usr/local/bin/nyasm-node` 并重启固定的 `nyasm-node` 服务。控制消息没有 shell、脚本、任意 URL、任意路径、配置或回滚字段。
 
-WebSocket 不是报告的唯一通道：指标历史仍走 `POST /api/agent/v1/report`，这样报告签名、防重放和 HTTP 限制保持不变；WebSocket 只负责在线控制面中必要的心跳、更新通知和更新状态。node 始终主动出站连接，主控不需要访问 node 的 SSH、HTTP 或管理端口。
+WebSocket 不是报告的唯一通道：指标历史仍走 `POST /api/agent/v1/report`，这样报告签名、防重放和 HTTP 限制保持不变；node WebSocket 以默认 2 秒间隔发送轻量网络遥测，controller 只在内存中保留最新值并通过认证的 `GET /api/telemetry/stream` SSE 推送给管理员页面。node 始终主动出站连接，主控不需要访问 node 的 SSH、HTTP 或管理端口。
 
 详细边界见 [docs/security.md](docs/security.md)。
 
