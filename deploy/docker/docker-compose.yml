@@ -21,6 +21,6 @@ services:
       NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
       NYASM_NOTIFICATION_KEY: ${NYASM_NOTIFICATION_KEY:-}
     volumes:
-      - ./data:/data
+      - ../../data:/data
     ports:
       - "${NYASM_BIND_ADDR:-127.0.0.1}:${NYASM_HOST_PORT:-8080}:8080"
