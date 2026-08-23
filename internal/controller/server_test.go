@@ -63,7 +63,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Status: model.NodePending}, "hash"); err != nil {
+	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Group: "production", Tags: []string{"web", "edge"}, CountryOverride: "日本", Status: model.NodePending}, "hash"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateNode(ctx, model.Node{ID: "node_revoked", Name: "Hidden revoked", Status: model.NodeRevoked}, "hash"); err != nil {
@@ -101,13 +101,33 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatalf("unexpected public dashboard: %#v", dashboard)
 	}
 	publicNode := dashboard.Nodes[0]
-	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
+	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
 		t.Fatalf("unexpected public node: %#v", publicNode)
 	}
 	body := response.Body.String()
-	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-agent", "private-db", "10.0.0.6:5432"} {
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-db", "10.0.0.6:5432"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("public response leaked %q: %s", secret, body)
+		}
+	}
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/api/public/nodes/"+publicNode.ID+"/metrics?hours=24&limit=10", nil)
+	metricsResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(metricsResponse, metricsRequest)
+	if metricsResponse.Code != http.StatusOK {
+		t.Fatalf("public metrics status: %d %s", metricsResponse.Code, metricsResponse.Body.String())
+	}
+	var publicMetrics struct {
+		Samples []model.PublicMetricSample `json:"samples"`
+	}
+	if err := json.Unmarshal(metricsResponse.Body.Bytes(), &publicMetrics); err != nil {
+		t.Fatal(err)
+	}
+	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 {
+		t.Fatalf("unexpected public metrics: %#v", publicMetrics)
+	}
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-db", "10.0.0.6:5432"} {
+		if strings.Contains(metricsResponse.Body.String(), secret) {
+			t.Fatalf("public metrics leaked %q: %s", secret, metricsResponse.Body.String())
 		}
 	}
 	if response.Header().Get("Cache-Control") != "public, max-age=5, stale-while-revalidate=15" {

@@ -267,8 +267,8 @@ type AlertEvent struct {
 	Notified  bool      `json:"notified"`
 }
 
-// PublicDashboard deliberately contains only coarse, non-identifying status data.
-// Keep this separate from Dashboard so private fields cannot leak by accident.
+// PublicDashboard deliberately contains only explicitly allowlisted, non-address
+// node data. Keep this separate from Dashboard so private fields cannot leak by accident.
 type PublicDashboard struct {
 	TotalNodes      int          `json:"total_nodes"`
 	OnlineNodes     int          `json:"online_nodes"`
@@ -280,11 +280,30 @@ type PublicDashboard struct {
 }
 
 type PublicNode struct {
+	ID            string     `json:"id"`
 	Name          string     `json:"name"`
+	Group         string     `json:"group,omitempty"`
+	Tags          []string   `json:"tags,omitempty"`
 	Status        NodeStatus `json:"status"`
+	AgentVersion  string     `json:"agent_version,omitempty"`
+	OS            string     `json:"os,omitempty"`
+	Arch          string     `json:"arch,omitempty"`
+	Country       string     `json:"country,omitempty"`
+	CountryCode   string     `json:"country_code,omitempty"`
+	UptimeSeconds uint64     `json:"uptime_seconds,omitempty"`
 	CPUPercent    int        `json:"cpu_percent"`
 	MemoryPercent int        `json:"memory_percent"`
 	DiskPercent   int        `json:"disk_percent"`
 	ChecksUp      int        `json:"checks_up"`
 	ChecksTotal   int        `json:"checks_total"`
+}
+
+type PublicMetricSample struct {
+	ObservedAt      time.Time `json:"observed_at"`
+	CPUPercent      float64   `json:"cpu_percent"`
+	MemoryPercent   float64   `json:"memory_percent"`
+	DiskPercent     float64   `json:"disk_percent"`
+	Load1           float64   `json:"load1"`
+	NetworkInBytes  uint64    `json:"network_in_bytes"`
+	NetworkOutBytes uint64    `json:"network_out_bytes"`
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
@@ -166,6 +167,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/settings/totp/enable", s.withAuth(s.handleTOTPEnable))
 	s.mux.HandleFunc("POST /api/settings/totp/disable", s.withAuth(s.handleTOTPDisable))
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
+	s.mux.HandleFunc("GET /api/public/nodes/{id}/metrics", s.handlePublicNodeMetrics)
 	s.mux.HandleFunc("GET /api/dashboard", s.withAuth(s.handleDashboard))
 	s.mux.HandleFunc("GET /api/telemetry/stream", s.withAuth(s.handleTelemetryStream))
 	s.mux.HandleFunc("GET /api/audit", s.withAuth(s.handleAudit))
@@ -487,15 +489,80 @@ func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 	writePublicDashboard(w, body)
 }
 
+func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.store.ListNodes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "public metrics unavailable")
+		return
+	}
+	var node model.Node
+	for _, candidate := range nodes {
+		if candidate.Status != model.NodeRevoked && publicNodeID(candidate.ID) == r.PathValue("id") {
+			node = candidate
+			break
+		}
+	}
+	if node.ID == "" {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	hours := queryInt(r, "hours", 24, 1, 24*30)
+	limit := queryInt(r, "limit", 120, 1, 500)
+	samples, err := s.store.ListMetrics(r.Context(), node.ID, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "public metrics unavailable")
+		return
+	}
+	publicSamples := make([]model.PublicMetricSample, 0, len(samples))
+	for _, sample := range samples {
+		memoryPercent := percentOf(sample.Metrics.MemoryUsedBytes, sample.Metrics.MemoryTotalBytes)
+		networkIn, networkOut := uint64(0), uint64(0)
+		for _, network := range sample.Metrics.Networks {
+			networkIn += network.BytesIn
+			networkOut += network.BytesOut
+		}
+		publicSamples = append(publicSamples, model.PublicMetricSample{
+			ObservedAt:      sample.ObservedAt,
+			CPUPercent:      sample.Metrics.CPUPercent,
+			MemoryPercent:   float64(memoryPercent),
+			DiskPercent:     float64(publicDiskPercent(sample.Metrics.Disks)),
+			Load1:           sample.Metrics.Load1,
+			NetworkInBytes:  networkIn,
+			NetworkOutBytes: networkOut,
+		})
+	}
+	w.Header().Set("Cache-Control", "public, max-age=5, stale-while-revalidate=15")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": publicNodeID(node.ID), "samples": publicSamples})
+}
+
+func publicNodeID(nodeID string) string {
+	digest := sha256.Sum256([]byte(nodeID))
+	return fmt.Sprintf("node_%x", digest[:8])
+}
+
 func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.PublicDashboard {
 	dashboard := model.PublicDashboard{GeneratedAtUnix: generatedAtUnix, Nodes: make([]model.PublicNode, 0, len(nodes))}
 	for _, node := range nodes {
 		if node.Status == model.NodeRevoked {
 			continue
 		}
+		country := node.Country
+		if strings.TrimSpace(node.CountryOverride) != "" {
+			country = node.CountryOverride
+		}
 		publicNode := model.PublicNode{
+			ID:            publicNodeID(node.ID),
 			Name:          node.Name,
+			Group:         node.Group,
+			Tags:          append([]string(nil), node.Tags...),
 			Status:        node.Status,
+			AgentVersion:  node.AgentVersion,
+			OS:            node.System.OS,
+			Arch:          node.System.Arch,
+			Country:       country,
+			CountryCode:   node.CountryCode,
+			UptimeSeconds: node.Metrics.UptimeSeconds,
 			CPUPercent:    coarsePercent(node.Metrics.CPUPercent),
 			MemoryPercent: percentOf(node.Metrics.MemoryUsedBytes, node.Metrics.MemoryTotalBytes),
 			DiskPercent:   publicDiskPercent(node.Metrics.Disks),
