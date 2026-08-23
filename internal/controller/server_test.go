@@ -175,6 +175,28 @@ func TestPublicDiskPercentAggregatesPhysicalDisks(t *testing.T) {
 	}
 }
 
+func TestPublicNodeSortModes(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	nodes := []model.Node{
+		{ID: "node_b", Name: "Alpha", CreatedAt: base.Add(2 * time.Hour)},
+		{ID: "node_a", Name: "Zulu", CreatedAt: base},
+	}
+	if got := publicNodeSort(""); got != "name" {
+		t.Fatalf("default public sort: got %q, want name", got)
+	}
+	if got := publicNodeSort("created"); got != "created" {
+		t.Fatalf("created public sort: got %q, want created", got)
+	}
+	sortPublicNodes(nodes, "created")
+	if nodes[0].ID != "node_a" || nodes[1].ID != "node_b" {
+		t.Fatalf("created sort order: %#v", nodes)
+	}
+	sortPublicNodes(nodes, "name")
+	if nodes[0].ID != "node_b" || nodes[1].ID != "node_a" {
+		t.Fatalf("name sort order: %#v", nodes)
+	}
+}
+
 func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir()+"/auth.db")

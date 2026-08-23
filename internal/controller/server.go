@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,7 @@ type Server struct {
 	setupMu         sync.Mutex
 	publicMu        sync.Mutex
 	publicAt        time.Time
+	publicSort      string
 	publicBody      []byte
 }
 
@@ -462,8 +464,9 @@ const publicDashboardCacheTTL = 5 * time.Second
 
 func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
+	sortMode := publicNodeSort(r.URL.Query().Get("sort"))
 	s.publicMu.Lock()
-	if len(s.publicBody) > 0 && now.Sub(s.publicAt) < publicDashboardCacheTTL {
+	if len(s.publicBody) > 0 && s.publicSort == sortMode && now.Sub(s.publicAt) < publicDashboardCacheTTL {
 		body := append([]byte(nil), s.publicBody...)
 		s.publicMu.Unlock()
 		writePublicDashboard(w, body)
@@ -477,6 +480,7 @@ func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
 		return
 	}
+	sortPublicNodes(nodes, sortMode)
 	body, err := json.Marshal(buildPublicDashboard(nodes, now.Unix()))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
@@ -484,9 +488,30 @@ func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publicMu.Lock()
 	s.publicAt = now
+	s.publicSort = sortMode
 	s.publicBody = append(s.publicBody[:0], body...)
 	s.publicMu.Unlock()
 	writePublicDashboard(w, body)
+}
+
+func publicNodeSort(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "created") {
+		return "created"
+	}
+	return "name"
+}
+
+func sortPublicNodes(nodes []model.Node, mode string) {
+	sort.SliceStable(nodes, func(left, right int) bool {
+		if mode == "created" && !nodes[left].CreatedAt.Equal(nodes[right].CreatedAt) {
+			return nodes[left].CreatedAt.Before(nodes[right].CreatedAt)
+		}
+		nameOrder := strings.Compare(strings.ToLower(nodes[left].Name), strings.ToLower(nodes[right].Name))
+		if nameOrder != 0 {
+			return nameOrder < 0
+		}
+		return nodes[left].ID < nodes[right].ID
+	})
 }
 
 func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request) {
