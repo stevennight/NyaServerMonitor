@@ -145,6 +145,16 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	}
 }
 
+func TestPublicDiskPercentAggregatesPhysicalDisks(t *testing.T) {
+	disks := []model.DiskMetric{
+		{Device: "vda", UsedBytes: 50, TotalBytes: 100},
+		{Device: "vdb", UsedBytes: 30, TotalBytes: 300},
+	}
+	if got := publicDiskPercent(disks); got != 20 {
+		t.Fatalf("expected weighted disk usage of 20%%, got %d%%", got)
+	}
+}
+
 func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir()+"/auth.db")

@@ -193,15 +193,18 @@ func alertConditionFor(rule model.AlertRule, node model.Node, previous model.Ale
 		return thresholdCondition(value >= rule.Threshold, value, fmt.Sprintf("内存使用率 %.1f%%", value))
 	case model.AlertDiskHigh:
 		value := 0.0
-		mount := ""
+		device := ""
 		for _, disk := range node.Metrics.Disks {
 			current := percent(disk.UsedBytes, disk.TotalBytes)
 			if current > value {
 				value = current
-				mount = disk.Mount
+				device = disk.Device
+				if device == "" {
+					device = disk.Mount
+				}
 			}
 		}
-		return thresholdCondition(value >= rule.Threshold, value, fmt.Sprintf("磁盘 %s 使用率 %.1f%%", mount, value))
+		return thresholdCondition(value >= rule.Threshold, value, fmt.Sprintf("磁盘 %s 使用率 %.1f%%", device, value))
 	case model.AlertLatencyHigh:
 		value := 0.0
 		name := ""

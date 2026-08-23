@@ -33,3 +33,17 @@ func TestReportRejectsUnsafeValues(t *testing.T) {
 		t.Fatal("cpu over 100 should be rejected")
 	}
 }
+
+func TestReportAcceptsPhysicalDiskMetric(t *testing.T) {
+	report := validReport()
+	report.Metrics.Disks = []model.DiskMetric{{Device: "vda", TotalBytes: 100, UsedBytes: 40, AvailableBytes: 60}}
+	if err := Report(report, time.Now()); err != nil {
+		t.Fatalf("physical disk metric rejected: %v", err)
+	}
+
+	invalid := validReport()
+	invalid.Metrics.Disks = []model.DiskMetric{{TotalBytes: 100, UsedBytes: 40, AvailableBytes: 60}}
+	if err := Report(invalid, time.Now()); err == nil {
+		t.Fatal("disk metric without device or mount should be rejected")
+	}
+}

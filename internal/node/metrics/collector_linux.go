@@ -5,7 +5,10 @@ package metrics
 import (
 	"bufio"
 	"math"
+	"math/bits"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -173,17 +176,296 @@ func readNetwork(snapshot *model.MetricsSnapshot) {
 }
 
 func readDisks(snapshot *model.MetricsSnapshot) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/", &stat); err != nil {
-		return
+	snapshot.Disks = append(snapshot.Disks, collectPhysicalDisks("/proc/self/mountinfo", "/sys/class/block")...)
+}
+
+type mountedFilesystem struct {
+	mountPoint string
+	source     string
+	deviceID   string
+}
+
+type physicalDiskAggregate struct {
+	total     uint64
+	used      uint64
+	available uint64
+}
+
+func collectPhysicalDisks(mountInfoPath, sysBlockPath string) []model.DiskMetric {
+	mounts, err := readMountInfo(mountInfoPath)
+	if err != nil {
+		return nil
 	}
-	total := uint64(stat.Blocks) * uint64(stat.Bsize)
-	available := uint64(stat.Bavail) * uint64(stat.Bsize)
+
+	aggregates := make(map[string]*physicalDiskAggregate)
+	seenFilesystems := make(map[string]struct{})
+	for _, mount := range mounts {
+		source := resolveDeviceSource(mount.source)
+		if source == "" {
+			source = resolveDeviceID(mount.deviceID, sysBlockPath)
+		}
+		if source == "" {
+			continue
+		}
+		if _, seen := seenFilesystems[source]; seen {
+			continue
+		}
+		seenFilesystems[source] = struct{}{}
+
+		usage, ok := filesystemUsage(mount.mountPoint)
+		if !ok {
+			continue
+		}
+
+		physicalNames := physicalDiskNames(source, sysBlockPath)
+		if len(physicalNames) == 0 {
+			continue
+		}
+		var physicalTotal uint64
+		availableNames := make([]string, 0, len(physicalNames))
+		for _, name := range physicalNames {
+			total := blockDeviceSize(sysBlockPath, name)
+			if total == 0 {
+				continue
+			}
+			if _, exists := aggregates[name]; !exists {
+				aggregates[name] = &physicalDiskAggregate{total: total}
+			}
+			physicalTotal = saturatingAdd(physicalTotal, total)
+			availableNames = append(availableNames, name)
+		}
+		if physicalTotal == 0 {
+			continue
+		}
+
+		for _, name := range availableNames {
+			aggregate := aggregates[name]
+			share := aggregate.total
+			aggregate.used = saturatingAdd(aggregate.used, proportionalBytes(usage.used, share, physicalTotal))
+			aggregate.available = saturatingAdd(aggregate.available, proportionalBytes(usage.available, share, physicalTotal))
+		}
+	}
+
+	names := make([]string, 0, len(aggregates))
+	for name := range aggregates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	disks := make([]model.DiskMetric, 0, len(names))
+	for _, name := range names {
+		aggregate := aggregates[name]
+		used := aggregate.used
+		available := aggregate.available
+		if used > aggregate.total {
+			used = aggregate.total
+		}
+		if available > aggregate.total {
+			available = aggregate.total
+		}
+		disks = append(disks, model.DiskMetric{
+			Device:         name,
+			TotalBytes:     aggregate.total,
+			UsedBytes:      used,
+			AvailableBytes: available,
+		})
+	}
+	return disks
+}
+
+func readMountInfo(path string) ([]mountedFilesystem, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var mounts []mountedFilesystem
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		separator := -1
+		for index, field := range fields {
+			if field == "-" {
+				separator = index
+				break
+			}
+		}
+		if separator < 6 || len(fields) <= separator+2 {
+			continue
+		}
+		mounts = append(mounts, mountedFilesystem{
+			mountPoint: decodeMountInfoPath(fields[4]),
+			source:     decodeMountInfoPath(fields[separator+2]),
+			deviceID:   fields[2],
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return mounts, nil
+}
+
+func decodeMountInfoPath(value string) string {
+	return strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(value)
+}
+
+func resolveDeviceSource(source string) string {
+	if !strings.HasPrefix(source, "/dev/") {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(source); err == nil {
+		source = resolved
+	}
+	name := filepath.Base(source)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return ""
+	}
+	return source
+}
+
+func resolveDeviceID(deviceID, sysBlockPath string) string {
+	if !strings.Contains(deviceID, ":") {
+		return ""
+	}
+	sysRoot := filepath.Dir(filepath.Dir(sysBlockPath))
+	path := filepath.Join(sysRoot, "dev", "block", deviceID)
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return resolved
+}
+
+func filesystemUsage(mountPoint string) (physicalDiskAggregate, bool) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(mountPoint, &stat); err != nil || stat.Bsize <= 0 {
+		return physicalDiskAggregate{}, false
+	}
+	total, ok := blockBytes(uint64(stat.Blocks), uint64(stat.Bsize))
+	if !ok {
+		return physicalDiskAggregate{}, false
+	}
+	available := uint64(0)
+	if stat.Bavail > 0 {
+		available, ok = blockBytes(uint64(stat.Bavail), uint64(stat.Bsize))
+		if !ok {
+			return physicalDiskAggregate{}, false
+		}
+	}
 	used := uint64(0)
 	if total >= available {
 		used = total - available
 	}
-	snapshot.Disks = append(snapshot.Disks, model.DiskMetric{Mount: "/", TotalBytes: total, UsedBytes: used, AvailableBytes: available})
+	return physicalDiskAggregate{total: total, used: used, available: available}, true
+}
+
+func physicalDiskNames(source, sysBlockPath string) []string {
+	name := filepath.Base(source)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return nil
+	}
+	names := make(map[string]struct{})
+	visited := make(map[string]struct{})
+	collectPhysicalDiskNames(name, sysBlockPath, visited, names)
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func collectPhysicalDiskNames(name, sysBlockPath string, visited, names map[string]struct{}) {
+	if name == "" {
+		return
+	}
+	if _, seen := visited[name]; seen {
+		return
+	}
+	visited[name] = struct{}{}
+
+	blockPath := filepath.Join(sysBlockPath, name)
+	if _, err := os.Stat(blockPath); err != nil {
+		return
+	}
+	if entries, err := os.ReadDir(filepath.Join(blockPath, "slaves")); err == nil && len(entries) > 0 {
+		for _, entry := range entries {
+			collectPhysicalDiskNames(entry.Name(), sysBlockPath, visited, names)
+		}
+		return
+	}
+	if _, err := os.Stat(filepath.Join(blockPath, "partition")); err == nil {
+		if resolved, err := filepath.EvalSymlinks(blockPath); err == nil {
+			parent := filepath.Base(filepath.Dir(resolved))
+			if parent != "" && parent != "block" && parent != name {
+				collectPhysicalDiskNames(parent, sysBlockPath, visited, names)
+				return
+			}
+		}
+	}
+	if !isPhysicalDisk(sysBlockPath, name) {
+		return
+	}
+	names[name] = struct{}{}
+}
+
+func isPhysicalDisk(sysBlockPath, name string) bool {
+	resolved, err := filepath.EvalSymlinks(filepath.Join(sysBlockPath, name))
+	if err == nil && strings.Contains(resolved, string(filepath.Separator)+"virtual"+string(filepath.Separator)) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(sysBlockPath, name, "device")); err == nil {
+		return true
+	}
+	for _, prefix := range []string{"sd", "vd", "xvd", "hd", "nvme", "mmcblk", "dasd"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockDeviceSize(sysBlockPath, name string) uint64 {
+	data, err := os.ReadFile(filepath.Join(sysBlockPath, name, "size"))
+	if err != nil {
+		return 0
+	}
+	sectors, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0
+	}
+	size, ok := blockBytes(sectors, 512)
+	if !ok {
+		return 0
+	}
+	return size
+}
+
+func blockBytes(blocks, blockSize uint64) (uint64, bool) {
+	if blockSize == 0 || blocks > ^uint64(0)/blockSize {
+		return 0, false
+	}
+	return blocks * blockSize, true
+}
+
+func proportionalBytes(value, numerator, denominator uint64) uint64 {
+	if value == 0 || numerator == 0 || denominator == 0 {
+		return 0
+	}
+	high, low := bits.Mul64(value, numerator)
+	if high >= denominator {
+		return ^uint64(0)
+	}
+	quotient, _ := bits.Div64(high, low, denominator)
+	return quotient
+}
+
+func saturatingAdd(left, right uint64) uint64 {
+	if ^uint64(0)-left < right {
+		return ^uint64(0)
+	}
+	return left + right
 }
 
 func processCount() int {

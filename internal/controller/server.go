@@ -540,10 +540,23 @@ func percentOf(used, total uint64) int {
 }
 
 func publicDiskPercent(disks []model.DiskMetric) int {
-	if len(disks) == 0 {
+	var used, total uint64
+	for _, disk := range disks {
+		if ^uint64(0)-used < disk.UsedBytes {
+			used = ^uint64(0)
+		} else {
+			used += disk.UsedBytes
+		}
+		if ^uint64(0)-total < disk.TotalBytes {
+			total = ^uint64(0)
+		} else {
+			total += disk.TotalBytes
+		}
+	}
+	if total == 0 {
 		return 0
 	}
-	return percentOf(disks[0].UsedBytes, disks[0].TotalBytes)
+	return percentOf(used, total)
 }
 
 func clampPercent(value int) int {

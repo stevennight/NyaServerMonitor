@@ -118,7 +118,8 @@ type MetricsSnapshot struct {
 }
 
 type DiskMetric struct {
-	Mount          string `json:"mount"`
+	Device         string `json:"device,omitempty"`
+	Mount          string `json:"mount,omitempty"`
 	TotalBytes     uint64 `json:"total_bytes"`
 	UsedBytes      uint64 `json:"used_bytes"`
 	AvailableBytes uint64 `json:"available_bytes"`

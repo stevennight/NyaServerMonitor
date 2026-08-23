@@ -116,7 +116,7 @@ func metrics(value model.MetricsSnapshot) error {
 		return fmt.Errorf("too many disk or network metrics")
 	}
 	for _, disk := range value.Disks {
-		if len(disk.Mount) == 0 || len(disk.Mount) > 256 || disk.UsedBytes > disk.TotalBytes || disk.AvailableBytes > disk.TotalBytes {
+		if (len(disk.Device) == 0 && len(disk.Mount) == 0) || len(disk.Device) > 256 || len(disk.Mount) > 256 || disk.UsedBytes > disk.TotalBytes || disk.AvailableBytes > disk.TotalBytes {
 			return fmt.Errorf("invalid disk metric")
 		}
 	}
