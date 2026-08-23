@@ -18,6 +18,7 @@ type Config struct {
 	NodeBinaryDir    string
 	LogLevel         string
 	NotificationKey  string
+	NodeTokenKey     string
 	SessionLifetime  time.Duration
 	OfflineAfter     time.Duration
 	MetricsRetention time.Duration
@@ -34,6 +35,7 @@ func parseConfig(args []string) (Config, error) {
 		NodeBinaryDir:    env("NYASM_NODE_BINARY_DIR", ""),
 		LogLevel:         env("NYASM_LOG_LEVEL", "info"),
 		NotificationKey:  env("NYASM_NOTIFICATION_KEY", ""),
+		NodeTokenKey:     env("NYASM_NODE_TOKEN_KEY", ""),
 		SessionLifetime:  24 * time.Hour,
 		OfflineAfter:     90 * time.Second,
 		MetricsRetention: 30 * 24 * time.Hour,

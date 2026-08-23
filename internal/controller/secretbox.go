@@ -34,7 +34,7 @@ func newSecretBox(raw string) *secretBox {
 
 func (b *secretBox) seal(value string) (string, error) {
 	if b == nil || b.aead == nil {
-		return "", errors.New("notification encryption key is not configured")
+		return "", errors.New("encryption key is not configured")
 	}
 	nonce := make([]byte, b.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
@@ -45,16 +45,16 @@ func (b *secretBox) seal(value string) (string, error) {
 
 func (b *secretBox) open(value string) (string, error) {
 	if b == nil || b.aead == nil {
-		return "", errors.New("notification encryption key is not configured")
+		return "", errors.New("encryption key is not configured")
 	}
 	encoded, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(encoded) < b.aead.NonceSize() {
-		return "", errors.New("invalid encrypted notification value")
+		return "", errors.New("invalid encrypted value")
 	}
 	nonce := encoded[:b.aead.NonceSize()]
 	plaintext, err := b.aead.Open(nil, nonce, encoded[b.aead.NonceSize():], nil)
 	if err != nil {
-		return "", errors.New("unable to decrypt notification value")
+		return "", errors.New("unable to decrypt value")
 	}
 	return string(plaintext), nil
 }

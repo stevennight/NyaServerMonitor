@@ -6,6 +6,7 @@ services:
       dockerfile: deploy/docker/Dockerfile
       args:
         NYASM_VERSION: ${NYASM_VERSION:-0.1.0-dev}
+        NYASM_UPDATE_PUBLIC_KEY: ${NYASM_UPDATE_PUBLIC_KEY:-}
     restart: unless-stopped
     read_only: true
     security_opt:
@@ -20,6 +21,7 @@ services:
       NYASM_NODE_BINARY_DIR: /usr/local/lib/nyasm
       NYASM_LOG_LEVEL: ${NYASM_LOG_LEVEL:-info}
       NYASM_NOTIFICATION_KEY: ${NYASM_NOTIFICATION_KEY:-}
+      NYASM_NODE_TOKEN_KEY: ${NYASM_NODE_TOKEN_KEY:-}
     volumes:
       - ../../data:/data
     ports:

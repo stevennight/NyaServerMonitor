@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch NyaServerMonitor signed node update requests
+
+[Path]
+PathExists=/var/lib/nyasm/update/request.json
+Unit=nyasm-node-update.service
+
+[Install]
+WantedBy=multi-user.target

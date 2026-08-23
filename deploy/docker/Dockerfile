@@ -5,20 +5,27 @@ ARG TARGETARCH=amd64
 ARG NYASM_VERSION=0.1.0-dev
 ARG NYASM_COMMIT=unknown
 ARG NYASM_BUILD_DATE=unknown
+ARG NYASM_UPDATE_PUBLIC_KEY=
 WORKDIR /src
 RUN mkdir -p /out/nodes
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN set -eux; \
-	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE}"; \
+	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE} -X nyaservermonitor/internal/shared/version.UpdatePublicKey=${NYASM_UPDATE_PUBLIC_KEY}"; \
 	CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/nyasm-controller ./cmd/controller
 RUN set -eux; \
-	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE}"; \
+	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE} -X nyaservermonitor/internal/shared/version.UpdatePublicKey=${NYASM_UPDATE_PUBLIC_KEY}"; \
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/nodes/nyasm-node-linux-amd64 ./cmd/node
 RUN set -eux; \
-	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE}"; \
+	LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE} -X nyaservermonitor/internal/shared/version.UpdatePublicKey=${NYASM_UPDATE_PUBLIC_KEY}"; \
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/nodes/nyasm-node-linux-arm64 ./cmd/node
+RUN --mount=type=secret,id=nyasm_update_signing_key,required=false \
+	if [ -s /run/secrets/nyasm_update_signing_key ]; then \
+		go run ./cmd/release-manifest --node-dir /out/nodes --version "${NYASM_VERSION}" --commit "${NYASM_COMMIT}" --build-date "${NYASM_BUILD_DATE}" --private-key-file /run/secrets/nyasm_update_signing_key --expected-public-key "${NYASM_UPDATE_PUBLIC_KEY}" --manifest /out/nodes/node-release-manifest.json --signature /out/nodes/node-release-manifest.sig --public-key /out/nodes/node-release-public.key; \
+	else \
+		go run ./cmd/release-manifest --node-dir /out/nodes --version "${NYASM_VERSION}" --commit "${NYASM_COMMIT}" --build-date "${NYASM_BUILD_DATE}" --manifest /out/nodes/node-release-manifest.json; \
+	fi
 RUN cp "/out/nodes/nyasm-node-${TARGETOS}-${TARGETARCH}" /out/nyasm-node
 
 FROM alpine:3.22

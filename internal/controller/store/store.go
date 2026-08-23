@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"nyaservermonitor/internal/shared/model"
+	sharedversion "nyaservermonitor/internal/shared/version"
 )
 
 var (
@@ -32,9 +33,10 @@ type User struct {
 }
 
 type NodeCredential struct {
-	Node      model.Node
-	TokenHash string
-	Revoked   bool
+	Node            model.Node
+	TokenHash       string
+	TokenCiphertext string
+	Revoked         bool
 }
 
 type NotificationChannelRecord struct {
@@ -88,6 +90,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			group_name TEXT NOT NULL DEFAULT '',
 			tags_json TEXT NOT NULL DEFAULT '[]',
 			token_hash TEXT NOT NULL,
+			token_ciphertext TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			revoked INTEGER NOT NULL DEFAULT 0,
 			agent_version TEXT NOT NULL DEFAULT '',
@@ -98,7 +101,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			sequence INTEGER NOT NULL DEFAULT 0,
 			system_json TEXT NOT NULL DEFAULT '{}',
-			last_report_json TEXT NOT NULL DEFAULT '{}'
+			last_report_json TEXT NOT NULL DEFAULT '{}',
+			desired_version TEXT NOT NULL DEFAULT '',
+			update_status TEXT NOT NULL DEFAULT '',
+			update_error TEXT NOT NULL DEFAULT '',
+			update_requested_at TEXT NOT NULL DEFAULT '',
+			update_finished_at TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS metric_samples (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,8 +189,49 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.ensureNodeColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.seedAlertRules(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureNodeColumns(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(nodes)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for name, definition := range map[string]string{
+		"token_ciphertext":    "TEXT NOT NULL DEFAULT ''",
+		"desired_version":     "TEXT NOT NULL DEFAULT ''",
+		"update_status":       "TEXT NOT NULL DEFAULT ''",
+		"update_error":        "TEXT NOT NULL DEFAULT ''",
+		"update_requested_at": "TEXT NOT NULL DEFAULT ''",
+		"update_finished_at":  "TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, ok := columns[name]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE nodes ADD COLUMN `+name+` `+definition); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -272,7 +321,7 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
-func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash string) error {
+func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash string, tokenCiphertext ...string) error {
 	now := time.Now().UTC()
 	if node.CreatedAt.IsZero() {
 		node.CreatedAt = now
@@ -284,10 +333,14 @@ func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash strin
 	if err != nil {
 		return err
 	}
+	ciphertext := ""
+	if len(tokenCiphertext) > 0 {
+		ciphertext = tokenCiphertext[0]
+	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, status, revoked, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-		node.ID, node.Name, node.Group, string(tags), tokenHash, node.Status,
+		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+		node.ID, node.Name, node.Group, string(tags), tokenHash, ciphertext, node.Status,
 		node.CreatedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
@@ -311,13 +364,14 @@ func (s *Store) GetNodeCredential(ctx context.Context, id string) (NodeCredentia
 	if err != nil {
 		return NodeCredential{}, err
 	}
-	return NodeCredential{Node: record.Node, TokenHash: record.TokenHash, Revoked: record.Revoked}, nil
+	return NodeCredential{Node: record.Node, TokenHash: record.TokenHash, TokenCiphertext: record.TokenCiphertext, Revoked: record.Revoked}, nil
 }
 
 func (s *Store) ListNodes(ctx context.Context) ([]model.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, group_name, tags_json, token_hash, status, revoked, agent_version, last_ip,
-		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json
+		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
+		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
+		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes ORDER BY name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, err
@@ -397,8 +451,84 @@ func (s *Store) nodeUpdateError(ctx context.Context, tx *sql.Tx, id string) erro
 	return ErrNodeNotFound
 }
 
-func (s *Store) SetNodeTokenHash(ctx context.Context, id, tokenHash string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET token_hash = ?, updated_at = ? WHERE id = ?`, tokenHash, time.Now().UTC().Format(time.RFC3339Nano), id)
+func (s *Store) SetNodeTokenHash(ctx context.Context, id, tokenHash string, tokenCiphertext ...string) error {
+	ciphertext := ""
+	if len(tokenCiphertext) > 0 {
+		ciphertext = tokenCiphertext[0]
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET token_hash = ?, token_ciphertext = ?, updated_at = ? WHERE id = ?`, tokenHash, ciphertext, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+func (s *Store) RequestNodeUpdate(ctx context.Context, id, version string) (model.Node, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET desired_version = ?, update_status = ?, update_error = '',
+		update_requested_at = ?, update_finished_at = '', updated_at = ?
+		WHERE id = ? AND revoked = 0`,
+		version, model.NodeUpdateRequested, now, now, id)
+	if err != nil {
+		return model.Node{}, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return model.Node{}, ErrNodeNotFound
+	}
+	return s.GetNode(ctx, id)
+}
+
+func (s *Store) UpdateNodeReport(ctx context.Context, id string, report model.NodeUpdateReport) error {
+	now := time.Now().UTC()
+	finished := report.CompletedAt
+	if finished.IsZero() && (report.Status == model.NodeUpdateSucceeded || report.Status == model.NodeUpdateFailed) {
+		finished = now
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET update_status = ?, update_error = ?,
+		update_finished_at = CASE WHEN ? <> '' THEN ? ELSE update_finished_at END,
+		updated_at = ? WHERE id = ? AND revoked = 0`,
+		report.Status, report.Error, formatTime(finished), formatTime(finished), now.Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNodeNotFound
+	}
+	return nil
+}
+
+func (s *Store) MarkNodeSeen(ctx context.Context, id string, system model.SystemInfo, version string) error {
+	now := time.Now().UTC()
+	systemJSON, err := json.Marshal(system)
+	if err != nil {
+		return err
+	}
+	var desiredVersion string
+	if err := s.db.QueryRowContext(ctx, `SELECT desired_version FROM nodes WHERE id = ? AND revoked = 0`, id).Scan(&desiredVersion); errors.Is(err, sql.ErrNoRows) {
+		return ErrNodeNotFound
+	} else if err != nil {
+		return err
+	}
+	reached := desiredVersion != "" && !sharedversion.NeedsUpdate(version, desiredVersion)
+	status := ""
+	if reached {
+		status = string(model.NodeUpdateSucceeded)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE nodes SET status = ?, agent_version = ?, last_seen = ?,
+		first_seen = CASE WHEN first_seen = '' THEN ? ELSE first_seen END,
+		updated_at = ?, system_json = ?,
+		update_status = CASE WHEN ? <> '' THEN ? ELSE update_status END,
+		update_error = CASE WHEN ? <> '' THEN '' ELSE update_error END,
+		update_finished_at = CASE WHEN ? <> '' THEN ? ELSE update_finished_at END
+		WHERE id = ? AND revoked = 0`,
+		model.NodeOnline, version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), string(systemJSON),
+		status, status, status, status, formatTime(now), id)
 	if err != nil {
 		return err
 	}
@@ -855,17 +985,19 @@ func (s *Store) CountActiveAlerts(ctx context.Context) (int, error) {
 }
 
 type nodeRecord struct {
-	Node      model.Node
-	TokenHash string
-	Revoked   bool
+	Node            model.Node
+	TokenHash       string
+	TokenCiphertext string
+	Revoked         bool
 }
 
 type scanner interface{ Scan(dest ...any) error }
 
 func (s *Store) nodeRecord(ctx context.Context, id string) (nodeRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, group_name, tags_json, token_hash, status, revoked, agent_version, last_ip,
-		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json
+		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
+		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
+		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes WHERE id = ?`, id)
 	return scanNodeRecord(row)
 }
@@ -875,9 +1007,11 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	var tagsJSON, status string
 	var revoked int
 	var lastSeen, firstSeen, created, updated, systemJSON, reportJSON string
-	if err := row.Scan(&record.Node.ID, &record.Node.Name, &record.Node.Group, &tagsJSON, &record.TokenHash,
+	var updateStatus, updateRequestedAt, updateFinishedAt string
+	if err := row.Scan(&record.Node.ID, &record.Node.Name, &record.Node.Group, &tagsJSON, &record.TokenHash, &record.TokenCiphertext,
 		&status, &revoked, &record.Node.AgentVersion, &record.Node.LastIP, &lastSeen, &firstSeen,
-		&created, &updated, &record.Node.Sequence, &systemJSON, &reportJSON); err != nil {
+		&created, &updated, &record.Node.Sequence, &systemJSON, &reportJSON, &record.Node.DesiredVersion,
+		&updateStatus, &record.Node.UpdateError, &updateRequestedAt, &updateFinishedAt); err != nil {
 		return nodeRecord{}, err
 	}
 	record.Node.Status = model.NodeStatus(status)
@@ -893,6 +1027,9 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	record.Node.FirstSeen = parseTime(firstSeen)
 	record.Node.CreatedAt = parseTime(created)
 	record.Node.UpdatedAt = parseTime(updated)
+	record.Node.UpdateStatus = model.NodeUpdateStatus(updateStatus)
+	record.Node.UpdateRequestedAt = parseTime(updateRequestedAt)
+	record.Node.UpdateFinishedAt = parseTime(updateFinishedAt)
 	return record, nil
 }
 

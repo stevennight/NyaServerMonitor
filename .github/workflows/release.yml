@@ -37,13 +37,35 @@ jobs:
           NYASM_VERSION: ${{ github.ref_name }}
           NYASM_COMMIT: ${{ github.sha }}
           NYASM_BUILD_DATE: ${{ steps.release-meta.outputs.build_date }}
+          NYASM_UPDATE_PUBLIC_KEY: ${{ secrets.NYASM_UPDATE_PUBLIC_KEY }}
         run: |
           mkdir -p dist
-          LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE}"
+          update_public_key="$(printf '%s' "$NYASM_UPDATE_PUBLIC_KEY" | tr -d '[:space:]')"
+          LDFLAGS="-s -w -X nyaservermonitor/internal/shared/version.Version=${NYASM_VERSION} -X nyaservermonitor/internal/shared/version.Commit=${NYASM_COMMIT} -X nyaservermonitor/internal/shared/version.BuildDate=${NYASM_BUILD_DATE} -X nyaservermonitor/internal/shared/version.UpdatePublicKey=${update_public_key}"
           GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o dist/nyasm-controller-linux-amd64 ./cmd/controller
           GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o dist/nyasm-controller-linux-arm64 ./cmd/controller
           GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o dist/nyasm-node-linux-amd64 ./cmd/node
           GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o dist/nyasm-node-linux-arm64 ./cmd/node
+
+      - name: Sign node release manifest
+        env:
+          NYASM_UPDATE_PUBLIC_KEY: ${{ secrets.NYASM_UPDATE_PUBLIC_KEY }}
+          NYASM_UPDATE_SIGNING_KEY: ${{ secrets.NYASM_UPDATE_SIGNING_KEY }}
+        run: |
+          signing_key_file="$RUNNER_TEMP/nyasm-update-signing.key"
+          trap 'rm -f "$signing_key_file"' EXIT
+          printf '%s' "$NYASM_UPDATE_SIGNING_KEY" > "$signing_key_file"
+          update_public_key="$(printf '%s' "$NYASM_UPDATE_PUBLIC_KEY" | tr -d '[:space:]')"
+          go run ./cmd/release-manifest \
+            --node-dir dist \
+            --version "${GITHUB_REF_NAME}" \
+            --commit "${GITHUB_SHA}" \
+            --build-date "${{ steps.release-meta.outputs.build_date }}" \
+            --private-key-file "$signing_key_file" \
+            --expected-public-key "$update_public_key" \
+            --manifest dist/node-release-manifest.json \
+            --signature dist/node-release-manifest.sig \
+            --public-key dist/node-release-public.key
           sha256sum dist/* > dist/SHA256SUMS
 
       - name: Publish GitHub release
@@ -97,5 +119,8 @@ jobs:
             NYASM_VERSION=${{ github.ref_name }}
             NYASM_COMMIT=${{ github.sha }}
             NYASM_BUILD_DATE=${{ needs.release-assets.outputs.build_date }}
+            NYASM_UPDATE_PUBLIC_KEY=${{ secrets.NYASM_UPDATE_PUBLIC_KEY }}
+          secrets: |
+            nyasm_update_signing_key=${{ secrets.NYASM_UPDATE_SIGNING_KEY }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

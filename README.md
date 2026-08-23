@@ -9,17 +9,19 @@
                   ^
                   |
           HTTPS/HTTP POST report
+          WSS control channel
                   |
               node agent
 ```
 
-子节点没有监听管理端口，也没有 WebSocket 控制通道。主节点不能通过本项目向子节点发送 shell、脚本、配置或更新命令。健康检查配置保存在子节点本地，主节点只接收检查结果。
+子节点没有监听管理端口。node 只主动连接主节点：指标仍通过签名 HTTP 上报，WebSocket 只承载心跳、更新状态和已签名 node 更新包。主节点不能通过本项目向子节点发送 shell、脚本、任意配置或任意命令；健康检查配置保存在子节点本地。
 
 初版已包含：
 
 - CPU 使用率、系统负载、内存、Swap、磁盘根分区、网络接口、运行时间、进程数。
 - 子节点本地 HTTP、TCP、ICMP ping、TLS 健康检查及延迟、丢包率、证书到期时间和错误摘要。
-- 节点注册、一次性 token 展示、token 轮换、撤销、恢复、在线/离线判断。
+- 节点注册、长期 token 展示、显式 token 轮换、撤销、恢复、在线/离线判断。
+- WebSocket 控制通道和 Ed25519 签名 node 更新，固定 systemd updater 原子替换并重启 node。
 - HMAC 请求签名、时间窗口、nonce 防重放、凭据哈希存储、严格 JSON 白名单和报告大小限制。
 - 管理员 PBKDF2 密码哈希、登录限速、可选 TOTP、审计日志。
 - SQLite 指标历史、自动清理、时间桶降采样、活动告警和嵌入式中文面板。
@@ -33,7 +35,7 @@ $env:GOCACHE = "D:\Projects\Self\Software\NyaServerMonitor\.gocache"
 go run ./cmd/controller --listen :8080 --data ./data
 ```
 
-访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应会提供一次性安装命令；在目标 Linux 节点上以 sudo-capable 用户执行即可自动下载探针、写入配置、安装 systemd 服务并启动。已有节点可在节点详情点击“生成安装命令”，该操作会轮换 token 后重新生成命令。
+访问 `http://127.0.0.1:8080`，创建管理员后，在“管理后台”中的“节点管理”页面创建节点。创建响应会提供安装命令；在目标 Linux 节点上以 sudo-capable 用户执行即可自动下载探针、写入配置、安装 systemd 服务和固定 updater 并启动。节点详情的“生成安装命令”只读取既有 token，不会隐式轮换；“轮换凭据”仍是单独的安全操作。
 
 也可以使用创建响应中的环境文件手动部署：
 
@@ -44,9 +46,9 @@ $env:NYASM_NODE_TOKEN = "<一次性 token>"
 go run ./cmd/node
 ```
 
-安装命令只在管理员登录后的创建/凭据轮换响应中出现。`/install.sh` 和 `/downloads/nyasm-node` 是公开下载端点，但不包含任何节点 token；生产环境必须使用 HTTPS。controller 默认从 `/usr/local/bin/nyasm-node` 提供 node 二进制，非 Docker 部署可通过 `NYASM_NODE_BINARY` 或 `--node-binary` 指定路径，也可通过 `NYASM_NODE_BINARY_DIR` 配置 `nyasm-node-linux-amd64` 和 `nyasm-node-linux-arm64` 多架构文件。
+安装命令只在管理员登录后的创建、安装命令查看或凭据轮换响应中出现。`/install.sh`、`/downloads/nyasm-node` 和签名清单是公开下载端点，但不包含任何节点 token；生产环境必须使用 HTTPS。controller 默认从 `/usr/local/bin/nyasm-node` 提供 node 二进制，签名更新还要求 `NYASM_NODE_BINARY_DIR` 中存在两种目标架构、manifest、manifest 签名、公钥标识和二进制签名文件。
 
-生产环境应使用 HTTPS。HTTP 只适合本机开发；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。探针安装脚本当前仍以 root 安装并运行 systemd 服务，这是为了完整读取进程信息并使用 ICMP；服务没有远程执行能力，且保留了 systemd 文件系统和权限限制。
+生产环境应使用 HTTPS。HTTP 只允许本机回环地址；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。探针安装脚本当前仍以 root 安装并运行主 systemd 服务，这是为了完整读取进程信息并使用 ICMP；更新由固定的 root updater service 执行，服务没有远程执行能力，且保留了 systemd 文件系统和权限限制。
 
 首页默认是公开状态页，不要求登录。公开页只展示管理员配置的节点名称、在线/离线状态、CPU/内存/磁盘百分比和服务检查汇总，不展示 IP、主机名、系统版本、标签分组、网络流量、运行时间、探针版本、检查目标或节点 ID。管理员登录后，根路径仍然是监控首页，会显示完整节点状态、IP 和详细指标；节点创建、凭据轮换、撤销/恢复及审计日志位于 `/admin` 管理后台。
 
@@ -128,7 +130,7 @@ docker compose up -d
 
 GitHub Actions 位于 `.github/workflows`：PR 和 `main`/`master` push 会执行 gofmt、Go 测试、race 测试、vet、Linux amd64/arm64 构建、Compose 校验和 Docker 构建。
 
-推送 `v*` 标签会创建 GitHub Release，发布 controller/node 的 Linux amd64/arm64 二进制、SHA256 校验文件，并将包含两种 node 二进制的 controller 镜像推送到 GHCR。镜像内置 `NYASM_NODE_BINARY_DIR`，所以 amd64 controller 可以为 arm64 子节点提供正确的探针二进制。
+推送 `v*` 标签会创建 GitHub Release，发布 controller/node 的 Linux amd64/arm64 二进制、签名 manifest、每架构 node 二进制签名和 SHA256 校验文件，并将包含签名清单和两种 node 二进制的 controller 镜像推送到 GHCR。CI 需要配置 `NYASM_UPDATE_SIGNING_KEY` 和对应的 `NYASM_UPDATE_PUBLIC_KEY` secrets；公钥编译进 controller/node，私钥只在 CI 签名步骤使用。镜像内置 `NYASM_NODE_BINARY_DIR`，所以 amd64 controller 可以为 arm64 子节点提供正确的探针二进制。
 
 ## 安全边界
 
@@ -142,7 +144,11 @@ NONCE
 SHA256(BODY)
 ```
 
-签名密钥是 token 的 SHA-256 派生值，数据库只保存派生值。token 轮换后旧 token 立即失效；撤销节点后报告会被拒绝。主节点收到的报告字段是固定 Go 结构，未知字段、过大数组、异常数值和过期时间都会被拒绝。
+签名密钥是 token 的 SHA-256 派生值，数据库保存派生值；如果配置 `NYASM_NODE_TOKEN_KEY`，还会保存 AES-GCM 加密 token，用于管理员重新生成安装命令。数据库和 key 都必须作为机密备份；旧数据库只有哈希，无法恢复旧 token，迁移后需要显式轮换一次。token 轮换后旧 token 立即失效；撤销节点后报告和 WebSocket 都会被拒绝。主节点收到的报告字段是固定 Go 结构，未知字段、过大数组、异常数值和过期时间都会被拒绝。
+
+主控更新流程是固定且单向授权的：管理员请求某个版本后，controller 通过 node 主动建立的 WebSocket 下发版本、manifest、manifest 签名和公钥标识；node 先验证 Ed25519 签名、版本、当前平台、SHA256 和文件大小，再写入受保护的更新请求文件。固定的 `nyasm-node-update.path` 只会调用固定的 `nyasm-node update`，下载固定 controller 路径的 gzip 二进制，完成校验后原子替换 `/usr/local/bin/nyasm-node` 并重启固定的 `nyasm-node` 服务。控制消息没有 shell、脚本、任意 URL、任意路径、配置或回滚字段。
+
+WebSocket 不是报告的唯一通道：指标历史仍走 `POST /api/agent/v1/report`，这样报告签名、防重放和 HTTP 限制保持不变；WebSocket 只负责在线控制面中必要的心跳、更新通知和更新状态。node 始终主动出站连接，主控不需要访问 node 的 SSH、HTTP 或管理端口。
 
 详细边界见 [docs/security.md](docs/security.md)。
 

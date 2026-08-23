@@ -3,6 +3,7 @@ module nyaservermonitor
 go 1.26
 
 require (
+	github.com/coder/websocket v1.8.15
 	golang.org/x/net v0.54.0
 	modernc.org/sqlite v1.38.2
 )

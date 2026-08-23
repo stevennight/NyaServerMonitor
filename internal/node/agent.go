@@ -25,6 +25,19 @@ type Agent struct {
 }
 
 func Run(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "update" {
+		cfg, err := parseConfig(args[1:])
+		if err != nil {
+			return err
+		}
+		if err := runUpdate(ctx, cfg); err != nil {
+			return err
+		}
+		if os.Getenv("NYASM_SKIP_RESTART") == "1" {
+			return nil
+		}
+		return restartNodeService()
+	}
 	cfg, err := parseConfig(args)
 	if err != nil {
 		return err
@@ -47,6 +60,7 @@ func Run(ctx context.Context, args []string) error {
 	if err := agent.send(ctx); err != nil {
 		agent.log.Warn("initial report failed", "error", err)
 	}
+	go controlLoop(ctx, agent.client, cfg, agent.log)
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 	for {

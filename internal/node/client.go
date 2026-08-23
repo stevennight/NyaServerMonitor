@@ -9,13 +9,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+
 	sharedcrypto "nyaservermonitor/internal/shared/crypto"
 	"nyaservermonitor/internal/shared/model"
+	sharedprotocol "nyaservermonitor/internal/shared/protocol"
 )
 
 const reportPath = "/api/agent/v1/report"
@@ -79,4 +85,57 @@ func (c *client) report(ctx context.Context, report model.Report) error {
 		return fmt.Errorf("controller rejected report: %s", response.Status)
 	}
 	return nil
+}
+
+func (c *client) connectWS(ctx context.Context) (*websocket.Conn, error) {
+	base, err := validateControllerURL(c.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	if base.Scheme == "http" {
+		base.Scheme = "ws"
+	} else {
+		base.Scheme = "wss"
+	}
+	base.Path = "/api/node/ws"
+	base.RawQuery = ""
+	base.Fragment = ""
+	headers := http.Header{}
+	headers.Set("X-NyaSM-Node-ID", c.nodeID)
+	headers.Set("X-NyaSM-Node-Token", c.token)
+	conn, response, err := websocket.Dial(ctx, base.String(), &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: headers})
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		return nil, err
+	}
+	return conn, nil
+}
+
+func writeControlMessage(ctx context.Context, conn *websocket.Conn, message sharedprotocol.ControlMessage) error {
+	return wsjson.Write(ctx, conn, message)
+}
+
+func validateControllerURL(raw string) (*url.URL, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("invalid controller URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("controller URL must use http or https")
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("unencrypted controller HTTP is only allowed on loopback")
+	}
+	return parsed, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

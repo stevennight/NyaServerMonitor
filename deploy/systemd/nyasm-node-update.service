@@ -1,0 +1,17 @@
+[Unit]
+Description=NyaServerMonitor signed node updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/nyasm/node.env
+ExecStart=/usr/local/bin/nyasm-node update
+User=root
+Group=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nyasm /usr/local/bin
+UMask=0077

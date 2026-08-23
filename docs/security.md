@@ -4,11 +4,11 @@
 
 主节点和子节点是两个不同的安全域。主节点保存管理员会话、节点 ID 和 token 派生值；子节点保存自己的 token 和本地健康检查配置。主节点不保存 SSH 私钥，不挂载 Docker socket，不连接子节点的 SSH/WinRM，也不提供远程命令接口。
 
-子节点只主动发起 `POST /api/agent/v1/report`。该请求是单向数据面：主节点返回的响应只有接受结果和服务器时间，探针不会把响应解析成配置、命令、URL、脚本或更新任务。
+子节点只主动发起连接。指标使用 `POST /api/agent/v1/report`，响应仍只有接受结果和服务器时间；另有一个 node 主动建立的 `ws/wss /api/node/ws` 控制连接，只允许固定的 hello、heartbeat、update_status 和签名 update 消息。探针不会把主节点响应解析成配置、命令、URL 或脚本。
 
 ## 报告认证
 
-每个节点拥有独立的随机 token。主节点数据库中保存 `SHA256(token)`，不保存明文。探针使用同样的派生值对请求签名，签名覆盖 HTTP 方法、固定路径、时间戳、随机 nonce 和完整 body 的 SHA-256。
+每个节点拥有独立的随机 token。主节点数据库中保存 `SHA256(token)`；配置 `NYASM_NODE_TOKEN_KEY` 时，另外保存 AES-GCM 加密 token，明文不会进入数据库。探针使用 token 派生值对 HTTP 请求签名，签名覆盖 HTTP 方法、固定路径、时间戳、随机 nonce 和完整 body 的 SHA-256。WebSocket 握手只在 TLS 或本机回环 HTTP 上使用 node ID 和 token，并且不把 token 放入 JSON 消息。
 
 主节点还会：
 
@@ -19,9 +19,9 @@
 - 在验签之后才解析报告并写入 SQLite。
 - 对每次报告检查节点是否已撤销。
 
-token 只在创建或轮换接口的响应中出现一次，节点列表、节点详情、审计和指标接口不会返回 token。生产环境必须通过 Caddy、反向代理或直接 HTTPS 暴露主节点，并限制管理面板访问来源。
+token 只在创建、显式轮换或管理员请求安装命令的受保护响应中出现，节点列表、节点详情、审计和指标接口不会返回 token。若没有配置 `NYASM_NODE_TOKEN_KEY`，旧节点无法重新生成安装命令，只能显式轮换一次。生产环境必须通过 Caddy、反向代理或直接 HTTPS 暴露主节点，并限制管理面板访问来源。
 
-节点部署命令只在管理员登录后的创建/凭据轮换响应中返回。公开的 `/install.sh` 只包含安装逻辑，公开的 `/downloads/nyasm-node` 只提供 controller 配置的二进制，两者都不携带节点 token。安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`；systemd 服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome`、`PrivateTmp` 和受限写目录。数据库仍只保存 token 哈希，已有节点不能从数据库恢复旧 token；需要重新部署时必须轮换 token。
+节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；该子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
 
 ## 公开状态页
 
@@ -33,7 +33,7 @@ token 只在创建或轮换接口的响应中出现一次，节点列表、节�
 
 ## 子节点最小权限
 
-当前安装器暂时继续使用 root 运行探针，以保证进程信息完整并兼容 ICMP。探针仍采用 `deploy/systemd/nyasm-node.service` 中的 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`，只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP/ICMP/TLS 检查，不调用 shell 或外部命令。
+当前安装器暂时继续使用 root 运行探针，以保证进程信息完整并兼容 ICMP。探针仍采用 `deploy/systemd/nyasm-node.service` 中的 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`，只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP/ICMP/TLS 检查，不调用 shell 或外部命令。`nyasm-node-update.service` 是独立的固定 root oneshot，仅为替换 root-owned 二进制而存在，不接受 controller 下发的服务名、命令或参数。
 
 健康检查 JSON 由节点管理员本地维护。主节点管理员不能通过面板改变检查目标；这避免了主节点被接管后借探针向内网发起任意请求或执行命令的控制链路。若需要变更检查，请在目标机器上审查并修改本地文件后重启探针。
 

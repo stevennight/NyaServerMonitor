@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"nyaservermonitor/internal/controller/auth"
+	"nyaservermonitor/internal/controller/nodehub"
 	"nyaservermonitor/internal/controller/store"
 	sharedcrypto "nyaservermonitor/internal/shared/crypto"
 	"nyaservermonitor/internal/shared/model"
@@ -38,18 +40,24 @@ const (
 var webFiles embed.FS
 
 type Server struct {
-	cfg        Config
-	log        *slog.Logger
-	store      *store.Store
-	sessions   *auth.Sessions
-	limiter    *auth.LoginLimiter
-	alerts     *alertEngine
-	mux        *http.ServeMux
-	nonces     *nonceCache
-	setupMu    sync.Mutex
-	publicMu   sync.Mutex
-	publicAt   time.Time
-	publicBody []byte
+	cfg             Config
+	log             *slog.Logger
+	store           *store.Store
+	tokenBox        *secretBox
+	sessions        *auth.Sessions
+	limiter         *auth.LoginLimiter
+	alerts          *alertEngine
+	mux             *http.ServeMux
+	nonces          *nonceCache
+	hub             *nodehub.Hub
+	nodeSocketMu    sync.Mutex
+	releaseMu       sync.Mutex
+	releaseCache    model.SignedNodeRelease
+	releaseCachedAt time.Time
+	setupMu         sync.Mutex
+	publicMu        sync.Mutex
+	publicAt        time.Time
+	publicBody      []byte
 }
 
 type nonceCache struct {
@@ -86,10 +94,12 @@ func NewServer(cfg Config, st *store.Store) *Server {
 		cfg:      cfg,
 		log:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})),
 		store:    st,
+		tokenBox: newSecretBox(cfg.NodeTokenKey),
 		sessions: auth.NewSessions(cfg.SessionLifetime),
 		limiter:  auth.NewLoginLimiter(),
 		mux:      http.NewServeMux(),
 		nonces:   newNonceCache(),
+		hub:      nodehub.New(),
 	}
 	s.alerts = newAlertEngine(st, newSecretBox(cfg.NotificationKey), s.log)
 	s.routes()
@@ -167,11 +177,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/nodes/{id}", s.withAuth(s.handleGetNode))
 	s.mux.HandleFunc("GET /api/nodes/{id}/metrics", s.withAuth(s.handleNodeMetrics))
 	s.mux.HandleFunc("POST /api/nodes/{id}/rotate-token", s.withAuth(s.handleRotateToken))
+	s.mux.HandleFunc("POST /api/nodes/{id}/install", s.withAuth(s.handleNodeInstall))
+	s.mux.HandleFunc("POST /api/nodes/{id}/update", s.withAuth(s.handleUpdateNode))
+	s.mux.HandleFunc("POST /api/nodes/update", s.withAuth(s.handleUpdateAllNodes))
 	s.mux.HandleFunc("POST /api/nodes/{id}/revoke", s.withAuth(s.handleRevokeNode))
 	s.mux.HandleFunc("POST /api/nodes/{id}/restore", s.withAuth(s.handleRestoreNode))
 	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
 	s.mux.HandleFunc("GET /downloads/nyasm-node", s.handleDownloadNodeBinary)
-	// This is the only public node endpoint. It accepts reports and has no response data channel.
+	s.mux.HandleFunc("GET /downloads/nyasm-node/manifest", s.handleDownloadNodeReleaseManifest)
+	s.mux.HandleFunc("GET /downloads/nyasm-node/signature", s.handleDownloadNodeBinarySignature)
+	s.mux.HandleFunc("GET /api/node/ws", s.withNode(s.handleNodeWS))
+	// Reports remain a signed, one-way data endpoint. The WebSocket only carries
+	// heartbeats and the fixed signed update message.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)
 	s.mux.HandleFunc("/", s.handleSPA)
 }
@@ -790,7 +807,15 @@ func validateAlertRuleType(value string) bool {
 }
 
 func (s *Server) handleControllerInfo(w http.ResponseWriter, r *http.Request, session auth.Session) {
-	writeJSON(w, http.StatusOK, map[string]any{"version": sharedversion.Version, "public_url": s.cfg.PublicURL, "report_path": reportPath, "node_control_channel": false})
+	release := s.nodeRelease()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":              sharedversion.Version,
+		"public_url":           s.cfg.PublicURL,
+		"report_path":          reportPath,
+		"node_control_channel": "websocket",
+		"node_update_enabled":  release.UpdateEnabled,
+		"node_update_version":  release.Manifest.Version,
+	})
 }
 
 type createNodeRequest struct {
@@ -827,8 +852,13 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request, sessio
 		writeError(w, http.StatusInternalServerError, "unable to generate node token")
 		return
 	}
+	tokenCiphertext, err := s.sealNodeToken(token)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to protect node token")
+		return
+	}
 	node := model.Node{ID: id, Name: input.Name, Group: input.Group, Tags: input.Tags, Status: model.NodePending}
-	if err := s.store.CreateNode(r.Context(), node, sharedcrypto.HashToken(token)); err != nil {
+	if err := s.store.CreateNode(r.Context(), node, sharedcrypto.HashToken(token), tokenCiphertext); err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to create node")
 		return
 	}
@@ -895,12 +925,53 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request, sessi
 		writeError(w, http.StatusInternalServerError, "unable to generate node token")
 		return
 	}
-	if err := s.store.SetNodeTokenHash(r.Context(), id, sharedcrypto.HashToken(token)); err != nil {
+	tokenCiphertext, err := s.sealNodeToken(token)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to protect node token")
+		return
+	}
+	if err := s.store.SetNodeTokenHash(r.Context(), id, sharedcrypto.HashToken(token), tokenCiphertext); err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to rotate node token")
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), session.Username, "node_token_rotated", id, nil)
 	writeJSON(w, http.StatusOK, nodeCredentialResponse(s.cfg, node, token))
+}
+
+func (s *Server) handleNodeInstall(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	id := r.PathValue("id")
+	node, err := s.store.GetNode(r.Context(), id)
+	if errors.Is(err, store.ErrNodeNotFound) {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load node")
+		return
+	}
+	credential, err := s.store.GetNodeCredential(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load node credential")
+		return
+	}
+	if credential.TokenCiphertext == "" || s.tokenBox == nil {
+		writeError(w, http.StatusConflict, "node token is not recoverable; configure NYASM_NODE_TOKEN_KEY and rotate this node token once")
+		return
+	}
+	token, err := s.tokenBox.open(credential.TokenCiphertext)
+	if err != nil || !constantTimeEqual(sharedcrypto.HashToken(token), credential.TokenHash) {
+		writeError(w, http.StatusConflict, "node token cannot be recovered; rotate this node token once")
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "node_install_command_viewed", id, nil)
+	writeJSON(w, http.StatusOK, nodeCredentialResponse(s.cfg, node, token))
+}
+
+func (s *Server) sealNodeToken(token string) (string, error) {
+	if s.tokenBox == nil {
+		return "", nil
+	}
+	return s.tokenBox.seal(token)
 }
 
 func (s *Server) handleRevokeNode(w http.ResponseWriter, r *http.Request, session auth.Session) {
@@ -1022,6 +1093,7 @@ type nodeCredential struct {
 	Node             model.Node `json:"node"`
 	Token            string     `json:"token"`
 	ControllerURL    string     `json:"controller_url"`
+	UpdateSigningKey string     `json:"update_signing_key,omitempty"`
 	Env              string     `json:"env"`
 	InstallCommand   string     `json:"install_command,omitempty"`
 	InstallScriptURL string     `json:"install_script_url,omitempty"`
@@ -1032,12 +1104,14 @@ type nodeCredential struct {
 func nodeCredentialResponse(cfg Config, node model.Node, token string) nodeCredential {
 	controllerURL := strings.TrimRight(cfg.PublicURL, "/")
 	envText := fmt.Sprintf("NYASM_CONTROLLER=%s\nNYASM_NODE_ID=%s\nNYASM_NODE_TOKEN=%s\nNYASM_DATA=/var/lib/nyasm\nNYASM_CHECKS=/etc/nyasm/checks.json\n", controllerURL, node.ID, token)
+	updateSigningKey := installUpdateSigningKey(controllerURL)
 	return nodeCredential{
 		Node:             node,
 		Token:            token,
 		ControllerURL:    controllerURL,
+		UpdateSigningKey: updateSigningKey,
 		Env:              envText,
-		InstallCommand:   installCommand(controllerURL, node.ID, token),
+		InstallCommand:   installCommand(controllerURL, node.ID, token, updateSigningKey),
 		InstallScriptURL: installScriptURL(controllerURL),
 		BinaryURL:        nodeBinaryURL(controllerURL),
 		ChecksExample:    `[{"id":"homepage","name":"Homepage","type":"http","target":"https://example.com","timeout_seconds":5,"expected_status":200},{"id":"gateway-ping","name":"Gateway ping","type":"ping","target":"1.1.1.1","timeout_seconds":2,"attempts":3},{"id":"certificate","name":"Public certificate","type":"tls","target":"https://example.com","timeout_seconds":5}]`,
@@ -1133,6 +1207,10 @@ func newToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func constantTimeEqual(left, right string) bool {
+	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
 }
 
 func absInt64(value int64) int64 {

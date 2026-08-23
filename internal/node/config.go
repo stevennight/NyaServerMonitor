@@ -16,6 +16,9 @@ type Config struct {
 	NodeToken          string
 	ChecksPath         string
 	DataDir            string
+	UpdateRequestPath  string
+	UpdateStatusPath   string
+	NodeBinaryPath     string
 	LogLevel           string
 	Interval           time.Duration
 	HTTPTimeout        time.Duration
@@ -24,14 +27,15 @@ type Config struct {
 
 func parseConfig(args []string) (Config, error) {
 	cfg := Config{
-		ControllerURL: env("NYASM_CONTROLLER", "http://127.0.0.1:8080"),
-		NodeID:        env("NYASM_NODE_ID", ""),
-		NodeToken:     env("NYASM_NODE_TOKEN", ""),
-		ChecksPath:    env("NYASM_CHECKS", ""),
-		DataDir:       env("NYASM_DATA", "./node-data"),
-		LogLevel:      env("NYASM_LOG_LEVEL", "info"),
-		Interval:      15 * time.Second,
-		HTTPTimeout:   20 * time.Second,
+		ControllerURL:  env("NYASM_CONTROLLER", "http://127.0.0.1:8080"),
+		NodeID:         env("NYASM_NODE_ID", ""),
+		NodeToken:      env("NYASM_NODE_TOKEN", ""),
+		ChecksPath:     env("NYASM_CHECKS", ""),
+		DataDir:        env("NYASM_DATA", "./node-data"),
+		NodeBinaryPath: env("NYASM_NODE_BINARY", defaultNodeBinaryPath),
+		LogLevel:       env("NYASM_LOG_LEVEL", "info"),
+		Interval:       15 * time.Second,
+		HTTPTimeout:    20 * time.Second,
 	}
 	flags := flag.NewFlagSet("nyasm-node", flag.ContinueOnError)
 	flags.StringVar(&cfg.ControllerURL, "controller", cfg.ControllerURL, "controller URL")
@@ -39,6 +43,7 @@ func parseConfig(args []string) (Config, error) {
 	flags.StringVar(&cfg.NodeToken, "token", cfg.NodeToken, "node token")
 	flags.StringVar(&cfg.ChecksPath, "checks", cfg.ChecksPath, "local service check JSON path")
 	flags.StringVar(&cfg.DataDir, "data", cfg.DataDir, "node data directory")
+	flags.StringVar(&cfg.NodeBinaryPath, "node-binary", cfg.NodeBinaryPath, "node binary path used by the fixed updater")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level")
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval, "report interval")
 	flags.DurationVar(&cfg.HTTPTimeout, "http-timeout", cfg.HTTPTimeout, "report HTTP timeout")
@@ -50,6 +55,9 @@ func parseConfig(args []string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.DataDir = filepath.Clean(cfg.DataDir)
+	cfg.UpdateRequestPath = filepath.Join(cfg.DataDir, "update", "request.json")
+	cfg.UpdateStatusPath = filepath.Join(cfg.DataDir, "update", "status.json")
+	cfg.NodeBinaryPath = filepath.Clean(cfg.NodeBinaryPath)
 	return cfg, nil
 }
 
@@ -58,11 +66,17 @@ func (c Config) validate() error {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return errors.New("controller must be an http or https URL")
 	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return errors.New("unencrypted controller HTTP is only allowed on loopback")
+	}
 	if len(c.NodeID) == 0 || len(c.NodeID) > 64 || strings.ContainsAny(c.NodeID, "/\\") {
 		return errors.New("node id is required and must not contain a path separator")
 	}
 	if len(c.NodeToken) < 32 || len(c.NodeToken) > 256 {
 		return errors.New("node token must be at least 32 characters")
+	}
+	if c.NodeBinaryPath == "" || filepath.IsAbs(c.NodeBinaryPath) == false {
+		return errors.New("node binary path must be an absolute path")
 	}
 	if c.Interval < 5*time.Second || c.Interval > 24*time.Hour {
 		return errors.New("interval must be between 5s and 24h")

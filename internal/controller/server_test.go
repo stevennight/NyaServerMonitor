@@ -178,6 +178,8 @@ func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 		{http.MethodGet, "/api/nodes/node_secret"},
 		{http.MethodGet, "/api/nodes/node_secret/metrics"},
 		{http.MethodPost, "/api/nodes/node_secret/rotate-token"},
+		{http.MethodPost, "/api/nodes/node_secret/install"},
+		{http.MethodPost, "/api/nodes/node_secret/update"},
 		{http.MethodPost, "/api/nodes/node_secret/revoke"},
 		{http.MethodPost, "/api/nodes/node_secret/restore"},
 	}
