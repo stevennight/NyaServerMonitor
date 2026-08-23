@@ -50,7 +50,7 @@
     const nodeHasDegraded = node => checksSummary(node).down>0;
     const hasTelemetry = node => { if(!node?.last_seen)return false; const date=new Date(node.last_seen); return !isNaN(date)&&date.getUTCFullYear()>=2001; };
     const visibleNodes = nodes => { const query=String(state.filters.query||'').trim().toLowerCase(); return (nodes||[]).filter(node=>{ const haystack=[node.name,node.id,node.group,node.last_ip,node.system?.hostname,node.system?.os,node.system?.arch,...(node.tags||[])].filter(Boolean).join(' ').toLowerCase(); const statusMatch=state.filters.status==='all'||(state.filters.status==='degraded'?nodeHasDegraded(node):node.status===state.filters.status); return (!query||haystack.includes(query))&&statusMatch&&(state.filters.group==='all'||nodeGroup(node)===state.filters.group); }); };
-    const api = async (path, options={}) => { const response = await fetch(path, {credentials:'same-origin', headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options}); let body=null; try { body=await response.json(); } catch (_) {} if (!response.ok) { if (response.status===401 && path!=='/api/auth/login') { state.user=null; state.showLogin=state.area==='admin'; startAutoRefresh(); } throw new Error(body?.error || response.statusText); } return body; };
+    const api = async (path, options={}) => { const controller=typeof AbortController==='function'?new AbortController():null; const timeout=setTimeout(()=>controller?.abort(),15000); let response; try { response=await fetch(path, {credentials:'same-origin', headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options, ...(controller?{signal:controller.signal}:{})}); } catch (error) { if (error?.name==='AbortError') throw new Error('请求超时，请稍后重试'); throw error; } finally { clearTimeout(timeout); } let body=null; try { body=await response.json(); } catch (_) {} if (!response.ok) { if (response.status===401 && path!=='/api/auth/login') { state.user=null; state.showLogin=state.area==='admin'; startAutoRefresh(); } throw new Error(body?.error || response.statusText); } return body; };
     const toast = (message, error=false) => { const el=document.createElement('div'); el.className='toast'+(error?' error':''); el.textContent=message; document.body.appendChild(el); setTimeout(()=>el.remove(),3200); };
     const setBusy = value => { state.busy=value; document.querySelectorAll('button').forEach(b=>b.disabled=value); };
     function startAutoRefresh(){if(state.refreshTimer)clearInterval(state.refreshTimer);state.refreshTimer=setInterval(()=>{if(!state.autoRefresh||state.busy)return;if(state.user)refresh();else refreshPublic();},30000);}
@@ -271,7 +271,9 @@
         }
         range.value = String(homeHistoryHours);
         if (!nodes.length) {
-          panel.querySelector('#home-history-content').innerHTML = '<div class="empty">暂无可用节点历史指标</div>';
+          const content = panel.querySelector('#home-history-content');
+          const emptyMarkup = '<div class="empty">暂无可用节点历史指标</div>';
+          if (content && content.innerHTML !== emptyMarkup) content.innerHTML = emptyMarkup;
           return;
         }
         const key = homeHistoryNodeID + ':' + homeHistoryHours;
