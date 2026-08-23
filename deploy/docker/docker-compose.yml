@@ -1,3 +1,5 @@
+name: nya-server-monitor
+
 services:
   controller:
     image: ${NYASM_IMAGE:-nyaservermonitor}:${NYASM_VERSION:-dev}
