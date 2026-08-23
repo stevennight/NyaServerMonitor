@@ -18,6 +18,8 @@
   <style>
     .alert-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(300px,1fr);gap:16px}.alert-rule-list{display:grid;gap:10px}.alert-rule{border:1px solid var(--line);border-radius:7px;padding:13px 14px;background:rgba(24,37,43,.42)}.alert-rule-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.alert-rule-name{font-weight:650}.alert-rule-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:5px}.alert-rule-actions{display:flex;gap:7px;flex-wrap:wrap}.alert-event-firing .event-pin{background:var(--red)}.alert-event-resolved .event-pin{background:var(--green)}.alert-event-reminder .event-pin{background:var(--yellow)}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px}.history-card{border:1px solid var(--line);border-radius:7px;padding:14px;background:rgba(24,37,43,.35)}.history-card h4{font-size:12px;color:var(--muted);font-weight:600;margin:0 0 10px}.history-card .chart{height:auto;display:block;padding:0;border-bottom:0;overflow:visible}.chart-svg{display:block;width:100%;height:174px;overflow:visible}.chart-grid-line{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4;vector-effect:non-scaling-stroke}.chart-axis-label{fill:var(--muted);font-size:10px}.chart-area{fill:rgba(109,181,223,.12)}.chart-line{fill:none;stroke:var(--blue);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}.chart-point{fill:var(--panel);stroke:var(--blue);stroke-width:2;vector-effect:non-scaling-stroke}.chart-point:hover{fill:var(--blue);stroke:var(--text)}.chart-empty{min-height:150px;display:grid;place-items:center}.check-meta{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:11px}.rule-type{min-width:160px}.channel-secret-note{font-size:11px;color:var(--muted);line-height:1.5}.check-status-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
     .disk-details{white-space:normal;overflow:visible;text-overflow:clip;display:grid;gap:2px}.disk-line{display:flex;gap:5px;min-width:0}.disk-label{flex:0 0 auto;color:var(--text)}.disk-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .layout-switch{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}.layout-switch button{border:0;border-right:1px solid var(--line);background:transparent;color:var(--muted);padding:8px 10px;font-size:12px}.layout-switch button:last-child{border-right:0}.layout-switch button:hover,.layout-switch button.active{background:var(--panel-2);color:var(--text)}.layout-switch button.active{box-shadow:inset 0 -2px var(--green)}.home-layout-cards{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}.home-layout-cards .node-card{padding:12px}.home-layout-cards .node-card-meta,.home-layout-cards .node-card-foot{display:none}.home-layout-cards .node-card-subline{margin-top:6px}.home-layout-cards .node-resource-grid{gap:8px;margin-top:10px}.home-layout-rows{grid-template-columns:1fr;gap:6px}.home-layout-rows .node-card{display:grid;grid-template-columns:minmax(180px,1.4fr) repeat(4,minmax(84px,1fr));align-items:center;gap:10px;padding:9px 12px;box-shadow:none}.home-layout-rows .node-card-subline,.home-layout-rows .node-card-meta,.home-layout-rows .node-card-foot{display:none}.home-layout-rows .node-resource-grid{display:contents}.home-layout-rows .resource-meter,.home-layout-rows .resource-detail{display:none}.home-layout-rows .resource-head{font-size:12px}
+    @media(max-width:700px){.layout-switch{width:100%}.layout-switch button{flex:1}.home-layout-rows .node-card{grid-template-columns:1fr 1fr;gap:8px 12px}.home-layout-rows .node-card-head{grid-column:1/-1}.home-layout-rows .resource-head{font-size:11px}}
     @media(max-width:900px){.alert-grid,.history-grid{grid-template-columns:1fr}}
   </style>
 </head>
@@ -275,6 +277,43 @@
         const key = homeHistoryNodeID + ':' + homeHistoryHours;
         if (panel.dataset.historyKey !== key) loadHomeHistory(panel);
       };
+      let homeLayoutMode = 'detail';
+      try { homeLayoutMode = ['detail', 'cards', 'rows'].includes(localStorage.getItem('nyasm_home_layout')) ? localStorage.getItem('nyasm_home_layout') : 'detail'; } catch (_) {}
+      const syncHomeLayout = () => {
+        const page = document.querySelector('.private-page');
+        const toolbar = page?.querySelector('.monitor-toolbar');
+        const grid = page?.querySelector('#node-grid');
+        if (!page || !toolbar || !grid) return;
+        let switcher = toolbar.querySelector('#home-layout-switch');
+        if (!switcher) {
+          switcher = document.createElement('div');
+          switcher.id = 'home-layout-switch';
+          switcher.className = 'layout-switch';
+          switcher.setAttribute('role', 'group');
+          switcher.setAttribute('aria-label', '节点显示方式');
+          [['detail', '详细'], ['cards', '卡片'], ['rows', '行']].forEach(([mode, label]) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.homeLayout = mode;
+            button.textContent = label;
+            button.title = label + '布局';
+            button.onclick = () => {
+              homeLayoutMode = mode;
+              try { localStorage.setItem('nyasm_home_layout', mode); } catch (_) {}
+              syncHomeLayout();
+            };
+            switcher.append(button);
+          });
+          toolbar.append(switcher);
+        }
+        grid.classList.remove('home-layout-detail', 'home-layout-cards', 'home-layout-rows');
+        grid.classList.add('home-layout-' + homeLayoutMode);
+        switcher.querySelectorAll('[data-home-layout]').forEach(button => {
+          const active = button.dataset.homeLayout === homeLayoutMode;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        });
+      };
       const showCredential = data => {
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
@@ -479,6 +518,7 @@
             text.textContent = text.textContent.replace('不会向子节点发送 shell、脚本、配置或更新指令', '不会向子节点发送 shell、脚本或配置；更新只能使用签名发布物');
           }
         }
+        syncHomeLayout();
         syncHomeHistory();
       };
       document.addEventListener('click', install, true);
