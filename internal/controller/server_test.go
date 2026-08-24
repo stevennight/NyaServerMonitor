@@ -81,6 +81,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 			MemoryUsedBytes:  60,
 			MemoryTotalBytes: 100,
 			Disks:            []model.DiskMetric{{Mount: "/", UsedBytes: 80, TotalBytes: 100}},
+			Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 4096, BytesOut: 2048}},
 		},
 		Checks: []model.ServiceCheck{{Name: "private-db", Target: "10.0.0.6:5432", Status: "down"}},
 	}, "10.0.0.5"); err != nil {
@@ -101,11 +102,11 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatalf("unexpected public dashboard: %#v", dashboard)
 	}
 	publicNode := dashboard.Nodes[0]
-	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
+	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.NetworkInBytes != 4096 || publicNode.NetworkOutBytes != 2048 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
 		t.Fatalf("unexpected public node: %#v", publicNode)
 	}
 	body := response.Body.String()
-	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-db", "10.0.0.6:5432"} {
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-agent", "private-db", "10.0.0.6:5432"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("public response leaked %q: %s", secret, body)
 		}
@@ -122,7 +123,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	if err := json.Unmarshal(metricsResponse.Body.Bytes(), &publicMetrics); err != nil {
 		t.Fatal(err)
 	}
-	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 {
+	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 || publicMetrics.Samples[0].NetworkInBytes != 4096 || publicMetrics.Samples[0].NetworkOutBytes != 2048 {
 		t.Fatalf("unexpected public metrics: %#v", publicMetrics)
 	}
 	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-db", "10.0.0.6:5432"} {

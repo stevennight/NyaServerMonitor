@@ -100,6 +100,8 @@ type publicLiveTelemetry struct {
 	DiskPercent         int                       `json:"disk_percent,omitempty"`
 	Load1               float64                   `json:"load1,omitempty"`
 	UptimeSeconds       uint64                    `json:"uptime_seconds,omitempty"`
+	NetworkInBytes      uint64                    `json:"network_in_bytes,omitempty"`
+	NetworkOutBytes     uint64                    `json:"network_out_bytes,omitempty"`
 	Networks            []publicLiveNetworkMetric `json:"networks,omitempty"`
 }
 
@@ -129,6 +131,10 @@ func sanitizePublicLiveTelemetry(telemetry model.LiveTelemetry) publicLiveTeleme
 		public.DiskPercent = publicDiskPercent(telemetry.Metrics.Disks)
 		public.Load1 = telemetry.Metrics.Load1
 		public.UptimeSeconds = telemetry.Metrics.UptimeSeconds
+		for _, network := range telemetry.Metrics.Networks {
+			public.NetworkInBytes += network.BytesIn
+			public.NetworkOutBytes += network.BytesOut
+		}
 	}
 	return public
 }

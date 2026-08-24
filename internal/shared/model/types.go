@@ -284,22 +284,24 @@ type PublicDashboard struct {
 }
 
 type PublicNode struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Group         string     `json:"group,omitempty"`
-	Tags          []string   `json:"tags,omitempty"`
-	Status        NodeStatus `json:"status"`
-	AgentVersion  string     `json:"agent_version,omitempty"`
-	OS            string     `json:"os,omitempty"`
-	Arch          string     `json:"arch,omitempty"`
-	Country       string     `json:"country,omitempty"`
-	CountryCode   string     `json:"country_code,omitempty"`
-	UptimeSeconds uint64     `json:"uptime_seconds,omitempty"`
-	CPUPercent    int        `json:"cpu_percent"`
-	MemoryPercent int        `json:"memory_percent"`
-	DiskPercent   int        `json:"disk_percent"`
-	ChecksUp      int        `json:"checks_up"`
-	ChecksTotal   int        `json:"checks_total"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	Group           string     `json:"group,omitempty"`
+	Tags            []string   `json:"tags,omitempty"`
+	Status          NodeStatus `json:"status"`
+	OS              string     `json:"os,omitempty"`
+	Arch            string     `json:"arch,omitempty"`
+	Country         string     `json:"country,omitempty"`
+	CountryCode     string     `json:"country_code,omitempty"`
+	UptimeSeconds   uint64     `json:"uptime_seconds,omitempty"`
+	NetworkInBytes  uint64     `json:"network_in_bytes,omitempty"`
+	NetworkOutBytes uint64     `json:"network_out_bytes,omitempty"`
+	Load1           float64    `json:"load1"`
+	CPUPercent      int        `json:"cpu_percent"`
+	MemoryPercent   int        `json:"memory_percent"`
+	DiskPercent     int        `json:"disk_percent"`
+	ChecksUp        int        `json:"checks_up"`
+	ChecksTotal     int        `json:"checks_total"`
 }
 
 type PublicMetricSample struct {

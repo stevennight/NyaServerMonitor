@@ -583,15 +583,19 @@ func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.Publi
 			Group:         node.Group,
 			Tags:          append([]string(nil), node.Tags...),
 			Status:        node.Status,
-			AgentVersion:  node.AgentVersion,
 			OS:            node.System.OS,
 			Arch:          node.System.Arch,
 			Country:       country,
 			CountryCode:   node.CountryCode,
 			UptimeSeconds: node.Metrics.UptimeSeconds,
+			Load1:         node.Metrics.Load1,
 			CPUPercent:    coarsePercent(node.Metrics.CPUPercent),
 			MemoryPercent: percentOf(node.Metrics.MemoryUsedBytes, node.Metrics.MemoryTotalBytes),
 			DiskPercent:   publicDiskPercent(node.Metrics.Disks),
+		}
+		for _, network := range node.Metrics.Networks {
+			publicNode.NetworkInBytes += network.BytesIn
+			publicNode.NetworkOutBytes += network.BytesOut
 		}
 		for _, check := range node.Checks {
 			publicNode.ChecksTotal++

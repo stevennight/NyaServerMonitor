@@ -20,7 +20,7 @@ func TestPublicTelemetryStreamSanitizesPrivateFields(t *testing.T) {
 		AgentVersion:        "v-private",
 		System:              model.SystemInfo{Hostname: "private-host", IP: "192.0.2.10"},
 		MetricsAvailable:    true,
-		Metrics:             model.MetricsSnapshot{CPUPercent: 42.4, MemoryTotalBytes: 100, MemoryUsedBytes: 50},
+		Metrics:             model.MetricsSnapshot{CPUPercent: 42.4, MemoryTotalBytes: 100, MemoryUsedBytes: 50, Networks: []model.NetworkMetric{{Name: "eth0", BytesIn: 4096, BytesOut: 2048}}},
 		Networks:            []model.LiveNetworkMetric{{Name: "eth0", BytesInPerSecond: 2048, BytesOutPerSecond: 1024}},
 	})
 
@@ -35,6 +35,9 @@ func TestPublicTelemetryStreamSanitizesPrivateFields(t *testing.T) {
 	}
 	if received["cpu_percent"] != float64(42) || received["memory_percent"] != float64(50) {
 		t.Fatalf("public metrics = %#v", received)
+	}
+	if received["network_in_bytes"] != float64(4096) || received["network_out_bytes"] != float64(2048) {
+		t.Fatalf("public network totals = %#v", received)
 	}
 	for _, key := range []string{"agent_version", "system", "metrics"} {
 		if _, ok := received[key]; ok {
