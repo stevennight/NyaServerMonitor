@@ -24,7 +24,7 @@ func TestGeoIPLookupParsesCountry(t *testing.T) {
 
 	lookup := newGeoIPLookup(server.URL + "/{ip}")
 	country, code, err := lookup.lookup(context.Background(), "8.8.8.8")
-	if err != nil || country != "Exampleland" || code != "EX" {
+	if err != nil || country != "EX" || code != "EX" {
 		t.Fatalf("geoip result = %q/%q, err=%v", country, code, err)
 	}
 }
@@ -71,7 +71,7 @@ func TestNodeCountryLookupRunsOncePerObservedIP(t *testing.T) {
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "8.8.8.8"); err != nil {
 		t.Fatal(err)
 	}
-	waitForNodeCountry(t, st, nodeID, "Exampleland")
+	waitForNodeCountry(t, st, nodeID, "EX")
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "8.8.8.8"); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestNodeCountryLookupRunsOncePerObservedIP(t *testing.T) {
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
-	waitForNodeCountry(t, st, nodeID, "Exampleland")
+	waitForNodeCountry(t, st, nodeID, "EX")
 	if requests.Load() != 2 {
 		t.Fatalf("changed-IP lookup count = %d, want 2", requests.Load())
 	}

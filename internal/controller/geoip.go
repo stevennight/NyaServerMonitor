@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"nyaservermonitor/internal/shared/model"
 )
 
 const (
@@ -79,24 +81,15 @@ func (g *geoIPLookup) lookup(ctx context.Context, ip string) (string, string, er
 		}
 		return "", "", errors.New(strings.TrimSpace(payload.Message))
 	}
-	country := strings.TrimSpace(payload.Country)
-	if country == "" {
-		country = strings.TrimSpace(payload.CountryName)
-	}
 	countryCode := strings.TrimSpace(payload.CountryCode)
 	if countryCode == "" {
 		countryCode = strings.TrimSpace(payload.CountryAlt)
 	}
-	if country == "" && countryCode == "" {
-		return "", "", errors.New("geoip response did not contain a country")
+	countryCode = model.NormalizeCountryCode(countryCode)
+	if countryCode == "" {
+		return "", "", errors.New("geoip response did not contain a valid country_code")
 	}
-	if country == "" {
-		country = countryCode
-	}
-	if len(country) > 128 || len(countryCode) > 16 || strings.ContainsAny(country+countryCode, "\r\n\x00") {
-		return "", "", errors.New("geoip country value is invalid")
-	}
-	return country, countryCode, nil
+	return model.CountryName(countryCode), countryCode, nil
 }
 
 func eligibleGeoIP(ip net.IP) bool {

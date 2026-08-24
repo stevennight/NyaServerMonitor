@@ -63,7 +63,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Group: "production", Tags: []string{"web", "edge"}, CountryOverride: "日本", Status: model.NodePending}, "hash"); err != nil {
+	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Group: "production", Tags: []string{"web", "edge"}, CountryOverride: "JP", Status: model.NodePending}, "hash"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateNode(ctx, model.Node{ID: "node_revoked", Name: "Hidden revoked", Status: model.NodeRevoked}, "hash"); err != nil {
@@ -102,7 +102,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatalf("unexpected public dashboard: %#v", dashboard)
 	}
 	publicNode := dashboard.Nodes[0]
-	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.NetworkInBytes != 4096 || publicNode.NetworkOutBytes != 2048 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
+	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CountryCode != "JP" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.NetworkInBytes != 4096 || publicNode.NetworkOutBytes != 2048 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
 		t.Fatalf("unexpected public node: %#v", publicNode)
 	}
 	body := response.Body.String()
@@ -111,17 +111,21 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 			t.Fatalf("public response leaked %q: %s", secret, body)
 		}
 	}
-	metricsRequest := httptest.NewRequest(http.MethodGet, "/api/public/nodes/"+publicNode.ID+"/metrics?hours=24&limit=10", nil)
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/api/public/nodes/"+publicNode.ID+"/metrics?hours=24&limit=500", nil)
 	metricsResponse := httptest.NewRecorder()
 	s.mux.ServeHTTP(metricsResponse, metricsRequest)
 	if metricsResponse.Code != http.StatusOK {
 		t.Fatalf("public metrics status: %d %s", metricsResponse.Code, metricsResponse.Body.String())
 	}
 	var publicMetrics struct {
-		Samples []model.PublicMetricSample `json:"samples"`
+		ResolutionSeconds int64                      `json:"resolution_seconds"`
+		Samples           []model.PublicMetricSample `json:"samples"`
 	}
 	if err := json.Unmarshal(metricsResponse.Body.Bytes(), &publicMetrics); err != nil {
 		t.Fatal(err)
+	}
+	if publicMetrics.ResolutionSeconds != 300 {
+		t.Fatalf("unexpected public metrics resolution: %d", publicMetrics.ResolutionSeconds)
 	}
 	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 || publicMetrics.Samples[0].NetworkInBytes != 4096 || publicMetrics.Samples[0].NetworkOutBytes != 2048 {
 		t.Fatalf("unexpected public metrics: %#v", publicMetrics)
@@ -173,6 +177,35 @@ func TestPublicDiskPercentAggregatesPhysicalDisks(t *testing.T) {
 	}
 	if got := publicDiskPercent(disks); got != 20 {
 		t.Fatalf("expected weighted disk usage of 20%%, got %d%%", got)
+	}
+}
+
+func TestBundledFlagAsset(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/flags.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+
+	request := httptest.NewRequest(http.MethodGet, "/assets/flags/cn.svg", nil)
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("flag asset status: %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "image/svg+xml; charset=utf-8" {
+		t.Fatalf("unexpected flag asset content type: %q", response.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(response.Body.String(), "<svg") || response.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("unexpected flag asset response: headers=%v body=%s", response.Header(), response.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	s.mux.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/assets/flags/zz.svg", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing flag status: got %d, want %d", missing.Code, http.StatusNotFound)
 	}
 }
 

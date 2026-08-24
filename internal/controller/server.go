@@ -131,6 +131,9 @@ func Run(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 	s := NewServer(cfg, st)
+	if err := s.queueAllNodeCountryLookups(ctx); err != nil {
+		s.log.Warn("queue country lookups on startup failed", "error", err)
+	}
 	go s.maintenanceLoop(ctx)
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -198,6 +201,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /downloads/nyasm-node/manifest", s.handleDownloadNodeReleaseManifest)
 	s.mux.HandleFunc("GET /downloads/nyasm-node/signature", s.handleDownloadNodeBinarySignature)
 	s.mux.HandleFunc("GET /api/node/ws", s.withNode(s.handleNodeWS))
+	s.mux.HandleFunc("GET /assets/flags/{code}", s.handleFlagAsset)
 	// Reports remain a signed, durable data endpoint. The node WebSocket carries
 	// heartbeats, live telemetry, and the fixed signed update message.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)
@@ -534,7 +538,7 @@ func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request)
 	}
 	hours := queryInt(r, "hours", 24, 1, 24*30)
 	limit := queryInt(r, "limit", 120, 1, 500)
-	samples, err := s.store.ListMetrics(r.Context(), node.ID, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), limit)
+	samples, resolution, err := s.store.ListMetricsWithResolution(r.Context(), node.ID, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "public metrics unavailable")
 		return
@@ -559,7 +563,7 @@ func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Cache-Control", "public, max-age=5, stale-while-revalidate=15")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	writeJSON(w, http.StatusOK, map[string]any{"node_id": publicNodeID(node.ID), "samples": publicSamples})
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": publicNodeID(node.ID), "resolution_seconds": resolution, "samples": publicSamples})
 }
 
 func publicNodeID(nodeID string) string {
@@ -573,9 +577,10 @@ func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.Publi
 		if node.Status == model.NodeRevoked {
 			continue
 		}
-		country := node.Country
-		if strings.TrimSpace(node.CountryOverride) != "" {
-			country = node.CountryOverride
+		model.NormalizeNodeCountry(&node)
+		countryCode := node.CountryCode
+		if override := model.CountryCodeFromValue(node.CountryOverride); override != "" {
+			countryCode = override
 		}
 		publicNode := model.PublicNode{
 			ID:            publicNodeID(node.ID),
@@ -585,8 +590,8 @@ func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.Publi
 			Status:        node.Status,
 			OS:            node.System.OS,
 			Arch:          node.System.Arch,
-			Country:       country,
-			CountryCode:   node.CountryCode,
+			Country:       model.CountryName(countryCode),
+			CountryCode:   countryCode,
 			UptimeSeconds: node.Metrics.UptimeSeconds,
 			Load1:         node.Metrics.Load1,
 			CPUPercent:    coarsePercent(node.Metrics.CPUPercent),
@@ -935,13 +940,15 @@ func (s *Server) handleControllerInfo(w http.ResponseWriter, r *http.Request, se
 }
 
 type nodeMetadataRequest struct {
-	Name            string   `json:"name"`
-	Group           string   `json:"group,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	IPOverride      *string  `json:"ip_override"`
-	CountryOverride *string  `json:"country_override"`
-	IP              *string  `json:"ip"`
-	Country         *string  `json:"country"`
+	Name                string   `json:"name"`
+	Group               string   `json:"group,omitempty"`
+	Tags                []string `json:"tags,omitempty"`
+	IPOverride          *string  `json:"ip_override"`
+	CountryOverride     *string  `json:"country_override"`
+	CountryCode         *string  `json:"country_code"`
+	CountryCodeOverride *string  `json:"country_code_override"`
+	IP                  *string  `json:"ip"`
+	Country             *string  `json:"country"`
 }
 
 func normalizeNodeMetadata(input *nodeMetadataRequest) error {
@@ -964,7 +971,13 @@ func normalizeNodeOverrides(input *nodeMetadataRequest) (string, string, error) 
 	if ipValue == nil {
 		ipValue = input.IP
 	}
-	countryValue := input.CountryOverride
+	countryValue := input.CountryCodeOverride
+	if countryValue == nil {
+		countryValue = input.CountryCode
+	}
+	if countryValue == nil {
+		countryValue = input.CountryOverride
+	}
 	if countryValue == nil {
 		countryValue = input.Country
 	}
@@ -987,9 +1000,9 @@ func normalizeNodeOverrides(input *nodeMetadataRequest) (string, string, error) 
 	}
 	countryOverride := ""
 	if countryValue != nil {
-		countryOverride = strings.TrimSpace(*countryValue)
-		if len(countryOverride) > 128 || strings.ContainsAny(countryOverride, "\r\n\x00") {
-			return "", "", errors.New("invalid country override")
+		countryOverride = model.CountryCodeFromValue(*countryValue)
+		if strings.TrimSpace(*countryValue) != "" && countryOverride == "" {
+			return "", "", errors.New("invalid country code")
 		}
 	}
 	return ipOverride, countryOverride, nil
@@ -1061,7 +1074,7 @@ func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request
 	if input.IPOverride == nil && input.IP == nil {
 		ipOverride = current.IPOverride
 	}
-	if input.CountryOverride == nil && input.Country == nil {
+	if input.CountryCodeOverride == nil && input.CountryCode == nil && input.CountryOverride == nil && input.Country == nil {
 		countryOverride = current.CountryOverride
 	}
 	node, err := s.store.UpdateNodeMetadataWithOverrides(r.Context(), r.PathValue("id"), input.Name, input.Group, input.Tags, ipOverride, countryOverride)
@@ -1130,12 +1143,12 @@ func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request, sessi
 	}
 	hours := queryInt(r, "hours", 24, 1, 24*30)
 	limit := queryInt(r, "limit", 500, 1, 2000)
-	samples, err := s.store.ListMetrics(r.Context(), id, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), limit)
+	samples, resolution, err := s.store.ListMetricsWithResolution(r.Context(), id, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to load metrics")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"node_id": id, "samples": samples})
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": id, "resolution_seconds": resolution, "samples": samples})
 }
 
 func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request, session auth.Session) {
@@ -1320,6 +1333,24 @@ func displayNodeIP(node model.Node) string {
 	return node.LastIP
 }
 
+func (s *Server) queueAllNodeCountryLookups(ctx context.Context) error {
+	if s.geoIP == nil {
+		return nil
+	}
+	nodes, err := s.store.ListNodes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if ip := displayNodeIP(node); ip != "" {
+			if err := s.queueNodeCountryLookup(ctx, node.ID, ip); err != nil {
+				s.log.Warn("queue startup country lookup failed", "node_id", node.ID, "error", err)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Server) queueNodeCountryLookup(ctx context.Context, nodeID, ip string) error {
 	if s.geoIP == nil || strings.TrimSpace(ip) == "" {
 		return nil
@@ -1356,6 +1387,22 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleFlagAsset(w http.ResponseWriter, r *http.Request) {
+	name := strings.ToLower(strings.TrimSuffix(r.PathValue("code"), ".svg"))
+	if len(name) != 2 || name[0] < 'a' || name[0] > 'z' || name[1] < 'a' || name[1] > 'z' {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	data, err := webFiles.ReadFile("webdist/assets/flags/" + name + ".svg")
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	_, _ = w.Write(data)
 }
 

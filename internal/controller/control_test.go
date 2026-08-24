@@ -98,7 +98,7 @@ func TestUpdateNodeMetadataEndpoint(t *testing.T) {
 	if err := st.CreateNode(ctx, model.Node{ID: nodeID, Name: "Before", Status: model.NodePending}, "hash"); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPut, "/api/nodes/"+nodeID, strings.NewReader(`{"name":" After ","group":" production ","tags":[" web ","linux"],"ip_override":"192.0.2.10","country_override":"测试国家"}`))
+	request := httptest.NewRequest(http.MethodPut, "/api/nodes/"+nodeID, strings.NewReader(`{"name":" After ","group":" production ","tags":[" web ","linux"],"ip_override":"192.0.2.10","country_code":"JP"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response := httptest.NewRecorder()
@@ -110,14 +110,14 @@ func TestUpdateNodeMetadataEndpoint(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "After" || updated.Group != "production" || len(updated.Tags) != 2 || updated.Tags[0] != "web" || updated.IPOverride != "192.0.2.10" || updated.CountryOverride != "测试国家" {
+	if updated.Name != "After" || updated.Group != "production" || len(updated.Tags) != 2 || updated.Tags[0] != "web" || updated.IPOverride != "192.0.2.10" || updated.CountryOverride != "JP" {
 		t.Fatalf("updated response = %#v", updated)
 	}
 	stored, err := st.GetNode(ctx, nodeID)
-	if err != nil || stored.Name != "After" || stored.Group != "production" || stored.IPOverride != "192.0.2.10" || stored.CountryOverride != "测试国家" {
+	if err != nil || stored.Name != "After" || stored.Group != "production" || stored.IPOverride != "192.0.2.10" || stored.CountryOverride != "JP" {
 		t.Fatalf("stored node = %#v, err=%v", stored, err)
 	}
-	request = httptest.NewRequest(http.MethodPut, "/api/nodes/"+nodeID, strings.NewReader(`{"name":"After again","group":"production","tags":["web","linux"],"ip_override":"","country_override":""}`))
+	request = httptest.NewRequest(http.MethodPut, "/api/nodes/"+nodeID, strings.NewReader(`{"name":"After again","group":"production","tags":["web","linux"],"ip_override":"","country_code":""}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(cookie)
 	response = httptest.NewRecorder()

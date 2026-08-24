@@ -231,6 +231,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureNodeColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateCountryData(ctx); err != nil {
+		return err
+	}
 	if err := s.compactLegacyMetrics(ctx); err != nil {
 		return err
 	}
@@ -238,6 +241,69 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+const countryDataMigrationKey = "country_code_normalized_v1"
+
+func (s *Store) migrateCountryData(ctx context.Context) error {
+	var marker string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, countryDataMigrationKey).Scan(&marker)
+	if err == nil && marker == "1" {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, country, country_code, country_override FROM nodes`)
+	if err != nil {
+		return err
+	}
+	type countryRow struct {
+		id, country, countryCode, countryOverride string
+	}
+	legacy := make([]countryRow, 0)
+	for rows.Next() {
+		var row countryRow
+		if err := rows.Scan(&row.id, &row.country, &row.countryCode, &row.countryOverride); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		legacy = append(legacy, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	for _, row := range legacy {
+		// Automatic values are deliberately cleared so the controller re-resolves
+		// every existing node from its current IP under the new code policy.
+		override := model.CountryCodeFromValue(row.countryOverride)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE nodes SET country = '', country_code = '', country_lookup_ip = ?, country_override = ?
+			WHERE id = ?`, "", override, row.id); err != nil {
+			rollback()
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES (?, '1')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, countryDataMigrationKey); err != nil {
+		rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ensureNodeColumns(ctx context.Context) error {
@@ -370,6 +436,7 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 
 func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash string, tokenCiphertext ...string) error {
 	now := time.Now().UTC()
+	model.NormalizeNodeCountry(&node)
 	if node.CreatedAt.IsZero() {
 		node.CreatedAt = now
 	}
@@ -387,9 +454,9 @@ func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash strin
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version,
 			last_ip, ip_override, country, country_code, country_lookup_ip, country_override, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, '', '', '', ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?, ?, '', ?, ?, ?)`,
 		node.ID, node.Name, node.Group, string(tags), tokenHash, ciphertext, node.Status, node.AgentVersion,
-		node.IPOverride, node.CountryOverride,
+		node.IPOverride, node.Country, node.CountryCode, node.CountryOverride,
 		node.CreatedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
@@ -655,7 +722,12 @@ func (s *Store) ClaimCountryLookup(ctx context.Context, id, ip string) (bool, er
 	return false, nil
 }
 
-func (s *Store) SaveNodeCountry(ctx context.Context, id, ip, country, countryCode string) error {
+func (s *Store) SaveNodeCountry(ctx context.Context, id, ip, _ string, countryCode string) error {
+	countryCode = model.NormalizeCountryCode(countryCode)
+	if countryCode == "" {
+		return fmt.Errorf("invalid country code")
+	}
+	country := model.CountryName(countryCode)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE nodes SET country = ?, country_code = ?, updated_at = ?
 		WHERE id = ? AND revoked = 0
@@ -834,6 +906,11 @@ func metricBucketStart(at time.Time, resolutionSeconds int64) int64 {
 }
 
 func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time, limit int) ([]model.MetricSample, error) {
+	samples, _, err := s.ListMetricsWithResolution(ctx, nodeID, since, limit)
+	return samples, err
+}
+
+func (s *Store) ListMetricsWithResolution(ctx context.Context, nodeID string, since time.Time, limit int) ([]model.MetricSample, int64, error) {
 	if limit < 1 {
 		limit = 1
 	}
@@ -854,7 +931,7 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 		WHERE node_id = ? AND resolution_seconds = ? AND bucket_start >= ?
 		ORDER BY bucket_start ASC`, nodeID, resolution, metricBucketStart(since, resolution))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	samples := make([]model.MetricSample, 0)
@@ -865,7 +942,7 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 		var memoryTotal, memoryUsed, swapTotal, swapUsed, processCount float64
 		if err := rows.Scan(&observed, &sequence, &sampleCount, &cpu, &load1, &load5, &load15,
 			&memoryTotal, &memoryUsed, &swapTotal, &swapUsed, &processCount, &snapshotJSON, &checksJSON); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if sampleCount < 1 {
 			continue
@@ -873,10 +950,10 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 		var snapshot model.MetricsSnapshot
 		var checks []model.ServiceCheck
 		if err := json.Unmarshal([]byte(snapshotJSON), &snapshot); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if err := json.Unmarshal([]byte(checksJSON), &checks); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		observedAt := parseTime(observed)
 		if observedAt.IsZero() {
@@ -895,9 +972,9 @@ func (s *Store) ListMetrics(ctx context.Context, nodeID string, since time.Time,
 		samples = append(samples, model.MetricSample{ObservedAt: observedAt, Sequence: uint64(sequence), Metrics: snapshot, Checks: checks})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return samples, nil
+	return samples, resolution, nil
 }
 
 func (s *Store) AddAudit(ctx context.Context, actor, action, target string, detail map[string]any) error {
@@ -1277,6 +1354,7 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	}
 	record.Node.Status = model.NodeStatus(status)
 	record.Revoked = revoked == 1
+	model.NormalizeNodeCountry(&record.Node)
 	_ = json.Unmarshal([]byte(tagsJSON), &record.Node.Tags)
 	_ = json.Unmarshal([]byte(systemJSON), &record.Node.System)
 	var report model.Report

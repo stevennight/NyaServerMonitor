@@ -113,7 +113,7 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 		t.Fatalf("same-IP country lookup claim = %v, err=%v", claimed, err)
 	}
 	got, err := st.GetNode(ctx, node.ID)
-	if err != nil || got.LastIP != "198.51.100.10" || got.Country != "Exampleland" || got.CountryCode != "EX" {
+	if err != nil || got.LastIP != "198.51.100.10" || got.Country != "EX" || got.CountryCode != "EX" {
 		t.Fatalf("automatic network metadata = %#v, err=%v", got, err)
 	}
 	if err := st.UpdateReport(ctx, report, "203.0.113.20"); err != nil {
@@ -127,14 +127,14 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatalf("changed-IP country lookup claim = %v, err=%v", claimed, err)
 	}
-	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "192.0.2.10", "Manual country"); err != nil {
+	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "192.0.2.10", "JP"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpdateReport(ctx, report, "198.51.100.30"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetNode(ctx, node.ID)
-	if err != nil || got.IPOverride != "192.0.2.10" || got.CountryOverride != "Manual country" {
+	if err != nil || got.IPOverride != "192.0.2.10" || got.CountryOverride != "JP" {
 		t.Fatalf("manual overrides were overwritten = %#v, err=%v", got, err)
 	}
 	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "", ""); err != nil {
@@ -143,6 +143,58 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 	got, err = st.GetNode(ctx, node.ID)
 	if err != nil || got.IPOverride != "" || got.CountryOverride != "" || got.LastIP != "198.51.100.30" {
 		t.Fatalf("manual overrides were not cleared = %#v, err=%v", got, err)
+	}
+}
+
+func TestCountryDataMigrationQueuesAutomaticRebuildFromCurrentIP(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/country-migration.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	const nodeID = "node_country_migration"
+	if err := st.CreateNode(ctx, model.Node{ID: nodeID, Name: "Country migration", Status: model.NodePending}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateReport(ctx, model.Report{
+		ProtocolVersion: model.ProtocolVersion,
+		NodeID:          nodeID,
+		SentAtUnix:      time.Now().Unix(),
+		Sequence:        1,
+	}, "8.8.8.8"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `
+		UPDATE nodes SET country = ?, country_code = ?, country_lookup_ip = ?, country_override = ?
+		WHERE id = ?`, "旧国家名", "TW", "8.8.8.8", "台湾", nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, countryDataMigrationKey); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.migrateCountryData(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetNode(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Country != "" || got.CountryCode != "" || got.CountryOverride != "CN" {
+		t.Fatalf("migrated country data = %#v", got)
+	}
+	var lookupIP string
+	if err := st.db.QueryRowContext(ctx, `SELECT country_lookup_ip FROM nodes WHERE id = ?`, nodeID).Scan(&lookupIP); err != nil {
+		t.Fatal(err)
+	}
+	if lookupIP != "" {
+		t.Fatalf("country lookup IP was not reset: %q", lookupIP)
+	}
+	claimed, err := st.ClaimCountryLookup(ctx, nodeID, "8.8.8.8")
+	if err != nil || !claimed {
+		t.Fatalf("current IP was not queued after migration: claimed=%v err=%v", claimed, err)
 	}
 }
 
@@ -176,9 +228,12 @@ func TestMetricBucketsAggregateAndSelectResolution(t *testing.T) {
 		Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 300, BytesOut: 150}},
 	})
 
-	samples, err := st.ListMetrics(ctx, "node_metrics", now.Add(-time.Hour), 2000)
+	samples, resolution, err := st.ListMetricsWithResolution(ctx, "node_metrics", now.Add(-time.Hour), 2000)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resolution != 60 {
+		t.Fatalf("metric resolution = %d, want 60", resolution)
 	}
 	if len(samples) != 1 {
 		t.Fatalf("aggregated samples = %d, want 1: %#v", len(samples), samples)
