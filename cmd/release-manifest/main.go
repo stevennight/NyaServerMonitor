@@ -84,6 +84,11 @@ func main() {
 				fatal(err.Error())
 			}
 			writeText(filepath.Join(nodeDir, fmt.Sprintf("nyasm-node-%s-%s.sig", artifact.OS, artifact.Arch)), artifactSignature+"\n")
+			digestSignature, err := signNodeArtifactDigest(privateKey, artifact)
+			if err != nil {
+				fatal(err.Error())
+			}
+			writeText(filepath.Join(nodeDir, fmt.Sprintf("nyasm-node-%s-%s.sha256.sig", artifact.OS, artifact.Arch)), digestSignature+"\n")
 		}
 		if signaturePath != "" {
 			writeText(signaturePath, signature+"\n")
@@ -95,6 +100,11 @@ func main() {
 	if githubOutput != "" {
 		appendText(githubOutput, fmt.Sprintf("signature=%s\npublic_key=%s\n", signature, publicKey))
 	}
+}
+
+func signNodeArtifactDigest(privateKey string, artifact model.NodeReleaseArtifact) (string, error) {
+	// Sign the fixed-length digest text so OpenSSL 1.1.1 can verify it.
+	return sharedcrypto.SignBytes(privateKey, []byte(artifact.SHA256))
 }
 
 func compact(value string) string { return strings.Join(strings.Fields(value), "") }

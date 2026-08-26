@@ -93,6 +93,7 @@ fi
 
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 command -v gzip >/dev/null 2>&1 || { echo "gzip is required" >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required" >&2; exit 1; }
 command -v systemctl >/dev/null 2>&1 || { echo "systemd is required" >&2; exit 1; }
 command -v install >/dev/null 2>&1 || { echo "install is required" >&2; exit 1; }
 if [ -n "$update_signing_key" ]; then
@@ -128,21 +129,24 @@ echo "[2/6] Decompressing nyasm-node"
 gzip -dc "$tmpdir/nyasm-node.gz" > "$tmpdir/nyasm-node"
 if [ -n "$update_signing_key" ]; then
 	public_key_path="$tmpdir/nyasm-node.pub"
-	signature_url="${controller%/}/downloads/nyasm-node/signature?os=${os}&arch=${arch}"
+	signature_url="${controller%/}/downloads/nyasm-node/signature?os=${os}&arch=${arch}&format=sha256"
 	echo "[3/6] Verifying signed nyasm-node"
+	digest_line="$(sha256sum "$tmpdir/nyasm-node")"
+	node_digest="${digest_line%% *}"
+	printf '%s' "$node_digest" > "$tmpdir/nyasm-node.digest"
 	key_base64="$(printf '%s' "$update_signing_key" | tr '_-' '/+')"
 	while [ $(( ${#key_base64} % 4 )) -ne 0 ]; do key_base64="${key_base64}="; done
 	printf '%s' "$key_base64" | base64 -d > "$public_key_path"
-	curl -fsS $curl_progress --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$signature_url" -o "$tmpdir/nyasm-node.sig"
+	curl -fsS $curl_progress --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$signature_url" -o "$tmpdir/nyasm-node.sha256.sig"
 	verify_node_signature() {
-		# OpenSSL 1.1.1 (for example Debian 11) treats Ed25519 input as raw by default.
+		# OpenSSL 1.1.1 (for example Debian 11) accepts the fixed-length digest as raw input.
 		pkeyutl_help="$(openssl pkeyutl -help 2>&1 || true)"
 		case "$pkeyutl_help" in
 			*-rawin*)
-				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node" -sigfile "$tmpdir/nyasm-node.sig" >/dev/null 2>&1
+				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1
 				;;
 			*)
-				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -in "$tmpdir/nyasm-node" -sigfile "$tmpdir/nyasm-node.sig" >/dev/null 2>&1
+				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1
 				;;
 		esac
 	}

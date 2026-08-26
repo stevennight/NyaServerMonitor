@@ -198,6 +198,9 @@ func (s *Server) handleDownloadNodeBinarySignature(w http.ResponseWriter, r *htt
 		return
 	}
 	filename := fmt.Sprintf("nyasm-node-%s-%s.sig", osName, arch)
+	if r.URL.Query().Get("format") == "sha256" {
+		filename = fmt.Sprintf("nyasm-node-%s-%s.sha256.sig", osName, arch)
+	}
 	payload, err := readTrimmedReleaseFile(filepath.Join(s.cfg.NodeBinaryDir, filename), "node binary signature is not configured")
 	if err != nil {
 		writeError(w, http.StatusNotFound, "node binary signature is not configured")

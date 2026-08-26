@@ -3,6 +3,8 @@ package controller
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,6 +23,10 @@ func TestInstallScriptInstallsAndRestartsNodeService(t *testing.T) {
 	for _, required := range []string{
 		"controller URL must use HTTPS unless it points to localhost",
 		"chmod 600 /etc/nyasm/node.env",
+		"command -v sha256sum",
+		"digest_line=\"$(sha256sum \"$tmpdir/nyasm-node\")\"",
+		"format=sha256",
+		"-in \"$tmpdir/nyasm-node.digest\" -sigfile \"$tmpdir/nyasm-node.sha256.sig\"",
 		"NoNewPrivileges=true",
 		"ProtectSystem=strict",
 		"ProtectHome=true",
@@ -33,6 +39,9 @@ func TestInstallScriptInstallsAndRestartsNodeService(t *testing.T) {
 		if !strings.Contains(script, required) {
 			t.Fatalf("install script is missing %q:\n%s", required, script)
 		}
+	}
+	if strings.Contains(script, "-in \"$tmpdir/nyasm-node\" -sigfile") {
+		t.Fatal("installer must verify the signed digest instead of the full binary")
 	}
 	if strings.Contains(script, "systemctl enable --now nyasm-node") {
 		t.Fatal("installer must restart an existing node so a rotated token is loaded")
@@ -135,6 +144,29 @@ func TestDownloadNodeBinaryCanStreamGzip(t *testing.T) {
 	}
 	if string(decoded) != string(content) {
 		t.Fatalf("decoded binary = %q, want %q", decoded, content)
+	}
+}
+
+func TestDownloadNodeBinarySignatureSupportsSHA256Format(t *testing.T) {
+	dir := t.TempDir()
+	rawSignature := make([]byte, ed25519.SignatureSize)
+	encodedSignature := base64.RawURLEncoding.EncodeToString(rawSignature)
+	path := filepath.Join(dir, "nyasm-node-linux-amd64.sha256.sig")
+	if err := os.WriteFile(path, []byte(encodedSignature), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfg: Config{NodeBinaryDir: dir}}
+	request := httptest.NewRequest(http.MethodGet, "/downloads/nyasm-node/signature?os=linux&arch=amd64&format=sha256", nil)
+	response := httptest.NewRecorder()
+	s.handleDownloadNodeBinarySignature(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("digest signature status: %d %s", response.Code, response.Body.String())
+	}
+	if got := response.Body.Bytes(); string(got) != string(rawSignature) {
+		t.Fatalf("digest signature body does not match: %x", got)
+	}
+	if got := response.Header().Get("Content-Disposition"); !strings.Contains(got, ".sha256.sig") {
+		t.Fatalf("digest signature filename = %q", got)
 	}
 }
 
