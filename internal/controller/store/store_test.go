@@ -41,7 +41,7 @@ func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := model.Report{ProtocolVersion: model.ProtocolVersion, NodeID: node.ID, SentAtUnix: time.Now().Unix(), Sequence: 7, AgentVersion: "dev", System: model.SystemInfo{Hostname: "host"}, Metrics: model.MetricsSnapshot{CPUPercent: 10}}
-	if err := st.UpdateReport(ctx, report, "127.0.0.1"); err != nil {
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetNode(ctx, node.ID)
@@ -51,7 +51,7 @@ func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 	if err := st.SetNodeRevoked(ctx, node.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateReport(ctx, report, "127.0.0.1"); err != ErrNodeRevoked {
+	if err := st.UpdateReport(ctx, report); err != ErrNodeRevoked {
 		t.Fatalf("expected revoked error, got %v", err)
 	}
 }
@@ -97,8 +97,9 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 		Sequence:        1,
 		AgentVersion:    "dev",
 		System:          model.SystemInfo{IP: "10.0.0.5"},
+		PublicIP:        &model.PublicIP{IPv4: "198.51.100.10", IPv6: "2001:db8::10"},
 	}
-	if err := st.UpdateReport(ctx, report, "198.51.100.10"); err != nil {
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := st.ClaimCountryLookup(ctx, node.ID, "198.51.100.10")
@@ -113,10 +114,11 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 		t.Fatalf("same-IP country lookup claim = %v, err=%v", claimed, err)
 	}
 	got, err := st.GetNode(ctx, node.ID)
-	if err != nil || got.LastIP != "198.51.100.10" || got.Country != "EX" || got.CountryCode != "EX" {
+	if err != nil || got.LastIP != "" || got.PublicIPv4 != "198.51.100.10" || got.PublicIPv6 != "2001:db8::10" || got.Country != "EX" || got.CountryCode != "EX" {
 		t.Fatalf("automatic network metadata = %#v, err=%v", got, err)
 	}
-	if err := st.UpdateReport(ctx, report, "203.0.113.20"); err != nil {
+	report.PublicIP = &model.PublicIP{IPv4: "203.0.113.20", IPv6: "2001:db8::10"}
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetNode(ctx, node.ID)
@@ -130,7 +132,8 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "192.0.2.10", "JP"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateReport(ctx, report, "198.51.100.30"); err != nil {
+	report.PublicIP = &model.PublicIP{IPv4: "198.51.100.30", IPv6: "2001:db8::10"}
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetNode(ctx, node.ID)
@@ -141,7 +144,7 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = st.GetNode(ctx, node.ID)
-	if err != nil || got.IPOverride != "" || got.CountryOverride != "" || got.LastIP != "198.51.100.30" {
+	if err != nil || got.IPOverride != "" || got.CountryOverride != "" || got.PublicIPv4 != "198.51.100.30" || got.LastIP != "" {
 		t.Fatalf("manual overrides were not cleared = %#v, err=%v", got, err)
 	}
 }
@@ -163,7 +166,8 @@ func TestCountryDataMigrationQueuesAutomaticRebuildFromCurrentIP(t *testing.T) {
 		NodeID:          nodeID,
 		SentAtUnix:      time.Now().Unix(),
 		Sequence:        1,
-	}, "8.8.8.8"); err != nil {
+		PublicIP:        &model.PublicIP{IPv4: "8.8.8.8"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.db.ExecContext(ctx, `

@@ -64,8 +64,8 @@ func TestNodeCountryLookupRunsOncePerObservedIP(t *testing.T) {
 	}))
 	defer server.Close()
 	s := NewServer(Config{GeoIPURL: server.URL + "/{ip}", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
-	report := model.Report{ProtocolVersion: model.ProtocolVersion, NodeID: nodeID, SentAtUnix: time.Now().Unix(), Sequence: 1, AgentVersion: "test"}
-	if err := st.UpdateReport(ctx, report, "8.8.8.8"); err != nil {
+	report := model.Report{ProtocolVersion: model.ProtocolVersion, NodeID: nodeID, SentAtUnix: time.Now().Unix(), Sequence: 1, AgentVersion: "test", PublicIP: &model.PublicIP{IPv4: "8.8.8.8"}}
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "8.8.8.8"); err != nil {
@@ -79,7 +79,8 @@ func TestNodeCountryLookupRunsOncePerObservedIP(t *testing.T) {
 	if requests.Load() != 1 {
 		t.Fatalf("same-IP lookup count = %d, want 1", requests.Load())
 	}
-	if err := st.UpdateReport(ctx, report, "1.1.1.1"); err != nil {
+	report.PublicIP = &model.PublicIP{IPv4: "1.1.1.1"}
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "1.1.1.1"); err != nil {
@@ -96,7 +97,8 @@ func TestNodeCountryLookupRunsOncePerObservedIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForRequestCount(t, &requests, 3)
-	if err := st.UpdateReport(ctx, report, "9.9.9.9"); err != nil {
+	report.PublicIP = &model.PublicIP{IPv4: "9.9.9.9"}
+	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.queueNodeCountryLookup(ctx, nodeID, "8.8.4.4"); err != nil {

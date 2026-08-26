@@ -36,7 +36,7 @@ func TestAlertEngineFiresAndResolvesResourceRule(t *testing.T) {
 			AgentVersion:    "test",
 			Metrics:         model.MetricsSnapshot{CPUPercent: cpu},
 		}
-		if err := st.UpdateReport(ctx, report, "127.0.0.1"); err != nil {
+		if err := st.UpdateReport(ctx, report); err != nil {
 			t.Fatal(err)
 		}
 		if err := engine.evaluateNode(ctx, node.ID); err != nil {

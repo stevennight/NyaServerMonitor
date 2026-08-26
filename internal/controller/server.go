@@ -1408,19 +1408,18 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	observedIP := remoteIP(r)
-	if err := s.store.UpdateReport(r.Context(), report, observedIP); errors.Is(err, store.ErrNodeRevoked) || errors.Is(err, store.ErrNodeNotFound) {
+	if err := s.store.UpdateReport(r.Context(), report); errors.Is(err, store.ErrNodeRevoked) || errors.Is(err, store.ErrNodeNotFound) {
 		writeError(w, http.StatusUnauthorized, "node is not authorized")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to save report")
 		return
 	}
-	lookupIP := observedIP
+	lookupIP := ""
 	if node, err := s.store.GetNode(r.Context(), report.NodeID); err != nil {
 		s.log.Warn("load node IP for country lookup failed", "node_id", report.NodeID, "error", err)
-	} else if node.IPOverride != "" {
-		lookupIP = node.IPOverride
+	} else {
+		lookupIP = displayNodeIP(node)
 	}
 	if err := s.queueNodeCountryLookup(r.Context(), report.NodeID, lookupIP); err != nil {
 		s.log.Warn("queue node country lookup failed", "node_id", report.NodeID, "error", err)
@@ -1438,7 +1437,10 @@ func displayNodeIP(node model.Node) string {
 	if strings.TrimSpace(node.IPOverride) != "" {
 		return node.IPOverride
 	}
-	return node.LastIP
+	if strings.TrimSpace(node.PublicIPv4) != "" {
+		return node.PublicIPv4
+	}
+	return node.PublicIPv6
 }
 
 func (s *Server) queueAllNodeCountryLookups(ctx context.Context) error {
@@ -1463,12 +1465,12 @@ func (s *Server) queueNodeCountryLookup(ctx context.Context, nodeID, ip string) 
 	if s.geoIP == nil || strings.TrimSpace(ip) == "" {
 		return nil
 	}
+	if !eligibleGeoIP(net.ParseIP(strings.Trim(ip, "[]"))) {
+		return nil
+	}
 	claimed, err := s.store.ClaimCountryLookup(ctx, nodeID, ip)
 	if err != nil || !claimed {
 		return err
-	}
-	if !eligibleGeoIP(net.ParseIP(strings.Trim(ip, "[]"))) {
-		return nil
 	}
 	go func() {
 		country, countryCode, err := s.geoIP.lookup(context.Background(), ip)

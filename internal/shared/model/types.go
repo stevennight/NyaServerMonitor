@@ -20,7 +20,9 @@ type Node struct {
 	Tags              []string         `json:"tags,omitempty"`
 	Status            NodeStatus       `json:"status"`
 	AgentVersion      string           `json:"agent_version,omitempty"`
-	LastIP            string           `json:"last_ip,omitempty"`
+	LastIP            string           `json:"-"`
+	PublicIPv4        string           `json:"public_ipv4,omitempty"`
+	PublicIPv6        string           `json:"public_ipv6,omitempty"`
 	IPOverride        string           `json:"ip_override,omitempty"`
 	Country           string           `json:"country,omitempty"`
 	CountryCode       string           `json:"country_code,omitempty"`
@@ -170,6 +172,11 @@ type ServiceCheck struct {
 	CheckedAtUnix     int64   `json:"checked_at_unix"`
 }
 
+type PublicIP struct {
+	IPv4 string `json:"ipv4,omitempty"`
+	IPv6 string `json:"ipv6,omitempty"`
+}
+
 type Report struct {
 	ProtocolVersion int             `json:"protocol_version"`
 	NodeID          string          `json:"node_id"`
@@ -178,6 +185,7 @@ type Report struct {
 	AgentVersion    string          `json:"agent_version"`
 	System          SystemInfo      `json:"system"`
 	Metrics         MetricsSnapshot `json:"metrics"`
+	PublicIP        *PublicIP       `json:"public_ip,omitempty"`
 	Checks          []ServiceCheck  `json:"checks,omitempty"`
 }
 

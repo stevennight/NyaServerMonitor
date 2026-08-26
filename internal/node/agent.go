@@ -20,6 +20,7 @@ type Agent struct {
 	log       *slog.Logger
 	client    *client
 	collector *metrics.Collector
+	publicIP  *publicIPDetector
 	checks    []CheckConfig
 	sequence  atomic.Uint64
 }
@@ -54,6 +55,7 @@ func Run(ctx context.Context, args []string) error {
 		log:       slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})),
 		client:    newClient(cfg),
 		collector: metrics.New(),
+		publicIP:  newPublicIPDetector(),
 		checks:    checks,
 	}
 	agent.log.Info("node agent started", "node_id", cfg.NodeID, "controller", cfg.ControllerURL, "interval", cfg.Interval)
@@ -80,6 +82,10 @@ func (a *Agent) send(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	publicIP := model.PublicIP{}
+	if a.publicIP != nil {
+		publicIP = a.publicIP.PublicIP(ctx)
+	}
 	report := model.Report{
 		ProtocolVersion: model.ProtocolVersion,
 		NodeID:          a.cfg.NodeID,
@@ -88,6 +94,7 @@ func (a *Agent) send(ctx context.Context) error {
 		AgentVersion:    sharedversion.Version,
 		System:          metrics.SystemInfo(),
 		Metrics:         snapshot,
+		PublicIP:        &publicIP,
 		Checks:          runChecks(ctx, a.checks),
 	}
 	return a.client.report(ctx, report)

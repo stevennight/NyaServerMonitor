@@ -3,6 +3,7 @@ package validate
 import (
 	"fmt"
 	"math"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ func Report(report model.Report, now time.Time) error {
 		return fmt.Errorf("report timestamp is outside the accepted window")
 	}
 	if err := system(report.System); err != nil {
+		return err
+	}
+	if err := publicIP(report.PublicIP); err != nil {
 		return err
 	}
 	if err := metrics(report.Metrics); err != nil {
@@ -80,6 +84,31 @@ func Report(report model.Report, now time.Time) error {
 		}
 		if check.CheckedAtUnix <= 0 || check.CheckedAtUnix < now.Add(-25*time.Hour).Unix() || check.CheckedAtUnix > now.Add(10*time.Minute).Unix() {
 			return fmt.Errorf("invalid service check timestamp")
+		}
+	}
+	return nil
+}
+
+func publicIP(value *model.PublicIP) error {
+	if value == nil {
+		return nil
+	}
+	for field, raw := range map[string]string{"public_ipv4": value.IPv4, "public_ipv6": value.IPv6} {
+		if len(raw) > 64 {
+			return fmt.Errorf("%s is too long", field)
+		}
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		parsed := net.ParseIP(strings.TrimSpace(raw))
+		if parsed == nil {
+			return fmt.Errorf("%s is invalid", field)
+		}
+		if field == "public_ipv4" && parsed.To4() == nil {
+			return fmt.Errorf("%s must be IPv4", field)
+		}
+		if field == "public_ipv6" && parsed.To4() != nil {
+			return fmt.Errorf("%s must be IPv6", field)
 		}
 	}
 	return nil

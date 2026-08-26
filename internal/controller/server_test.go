@@ -27,13 +27,13 @@ func TestAgentReportAuthenticatesAndRejectsReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
-	report := model.Report{ProtocolVersion: model.ProtocolVersion, NodeID: "node_test", SentAtUnix: time.Now().Unix(), Sequence: 1, AgentVersion: "test", System: model.SystemInfo{Hostname: "host"}, Metrics: model.MetricsSnapshot{CPUPercent: 12}}
+	report := model.Report{ProtocolVersion: model.ProtocolVersion, NodeID: "node_test", SentAtUnix: time.Now().Unix(), Sequence: 1, AgentVersion: "test", System: model.SystemInfo{Hostname: "host"}, Metrics: model.MetricsSnapshot{CPUPercent: 12}, PublicIP: &model.PublicIP{IPv4: "198.51.100.40", IPv6: "2001:db8::40"}}
 	body, _ := json.Marshal(report)
 	timestamp := time.Now().Unix()
 	nonce := "abcdefghijklmnop"
 	signature := sharedcrypto.ReportSignature(sharedcrypto.HashToken(token), http.MethodPost, reportPath, formatInt(timestamp), nonce, body)
 	request := httptest.NewRequest(http.MethodPost, reportPath, strings.NewReader(string(body)))
-	request.RemoteAddr = "127.0.0.1:1234"
+	request.RemoteAddr = "172.22.0.1:1234"
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-NyaSM-Node-ID", "node_test")
 	request.Header.Set("X-NyaSM-Timestamp", formatInt(timestamp))
@@ -44,8 +44,22 @@ func TestAgentReportAuthenticatesAndRejectsReplay(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("first report status: %d %s", response.Code, response.Body.String())
 	}
+	node, err := st.GetNode(ctx, "node_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.PublicIPv4 != "198.51.100.40" || node.PublicIPv6 != "2001:db8::40" || node.LastIP != "" {
+		t.Fatalf("report IPs = %#v", node)
+	}
+	encodedNode, err := json.Marshal(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedNode), "last_ip") || strings.Contains(string(encodedNode), "172.22.0.1") {
+		t.Fatalf("legacy or remote IP leaked from node JSON: %s", encodedNode)
+	}
 	request = httptest.NewRequest(http.MethodPost, reportPath, strings.NewReader(string(body)))
-	request.RemoteAddr = "127.0.0.1:1234"
+	request.RemoteAddr = "172.22.0.1:1234"
 	for key, values := range map[string]string{"Content-Type": "application/json", "X-NyaSM-Node-ID": "node_test", "X-NyaSM-Timestamp": formatInt(timestamp), "X-NyaSM-Nonce": nonce, "X-NyaSM-Signature": signature} {
 		request.Header.Set(key, values)
 	}
@@ -53,6 +67,18 @@ func TestAgentReportAuthenticatesAndRejectsReplay(t *testing.T) {
 	s.handleAgentReport(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed report status: %d", response.Code)
+	}
+}
+
+func TestDisplayNodeIPIgnoresLegacyLastIP(t *testing.T) {
+	if got := displayNodeIP(model.Node{LastIP: "172.22.0.1"}); got != "" {
+		t.Fatalf("legacy last IP = %q, want empty", got)
+	}
+	if got := displayNodeIP(model.Node{LastIP: "172.22.0.1", PublicIPv6: "2001:db8::50"}); got != "2001:db8::50" {
+		t.Fatalf("reported IPv6 = %q", got)
+	}
+	if got := displayNodeIP(model.Node{IPOverride: "192.0.2.50", PublicIPv4: "198.51.100.50"}); got != "192.0.2.50" {
+		t.Fatalf("manual IP override = %q", got)
 	}
 }
 
@@ -84,7 +110,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 			Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 4096, BytesOut: 2048}},
 		},
 		Checks: []model.ServiceCheck{{Name: "private-db", Target: "10.0.0.6:5432", Status: "down"}},
-	}, "10.0.0.5"); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)

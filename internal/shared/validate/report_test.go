@@ -47,3 +47,22 @@ func TestReportAcceptsPhysicalDiskMetric(t *testing.T) {
 		t.Fatal("disk metric without device or mount should be rejected")
 	}
 }
+
+func TestReportValidatesPublicIPFamilies(t *testing.T) {
+	report := validReport()
+	report.PublicIP = &model.PublicIP{IPv4: "198.51.100.30", IPv6: "2001:db8::30"}
+	if err := Report(report, time.Now()); err != nil {
+		t.Fatalf("valid public IP report rejected: %v", err)
+	}
+
+	invalid := validReport()
+	invalid.PublicIP = &model.PublicIP{IPv4: "2001:db8::30"}
+	if err := Report(invalid, time.Now()); err == nil {
+		t.Fatal("IPv6 in public IPv4 field should be rejected")
+	}
+	invalid = validReport()
+	invalid.PublicIP = &model.PublicIP{IPv6: "198.51.100.30"}
+	if err := Report(invalid, time.Now()); err == nil {
+		t.Fatal("IPv4 in public IPv6 field should be rejected")
+	}
+}
