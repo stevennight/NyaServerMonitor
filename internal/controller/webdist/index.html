@@ -153,6 +153,14 @@
      .map-zoom-button:focus-visible,.map-mode-option:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
      .map-zoom-label{min-width:42px;color:var(--muted);font-size:11px;text-align:center;font-variant-numeric:tabular-nums}
      .map-canvas{position:absolute;inset:0;transform-origin:50% 50%;transition:transform .18s ease;will-change:transform}
+     .map-surface{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+     .map-surface[data-map-dragging="true"]{cursor:grabbing}
+     .map-surface .map-zoom-controls{position:absolute;top:12px;right:12px;z-index:4;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px;border:1px solid var(--theme-map-border);border-radius:6px;background:var(--panel);box-shadow:0 8px 20px var(--theme-overlay-shadow)}
+     .map-surface .map-zoom-button{width:30px;height:30px;border-color:var(--theme-map-border);background:var(--panel-2)}
+     .map-surface .map-zoom-label{min-width:30px}
+     .map-surface .map-popover{z-index:5}
+     .map-surface .world-map-base{user-select:none;-webkit-user-drag:none}
+     .geo-map-panel.map-collapsed .map-toggle{display:none}
      .map-popover-coordinates{margin-top:4px;color:var(--muted);font-size:11px}
      .map-node-link{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:4px 0;border:0;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer}
      .map-node-link:hover,.map-node-link:focus-visible{color:var(--blue);outline:0}
@@ -161,7 +169,7 @@
      .map-popover-expand:hover,.map-popover-expand:focus-visible{border-color:var(--theme-hover-border);background:var(--panel);outline:0}
      .node-location{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
      .node-location-detail{color:var(--muted);font-size:11px}
-     @media(max-width:700px){.map-mode-option{padding-left:7px;padding-right:7px}.map-zoom-label{display:none}.map-zoom-button{width:30px;height:30px}}
+     @media(max-width:700px){.map-mode-option{padding-left:7px;padding-right:7px}.map-zoom-label{display:none}.map-zoom-button{width:30px;height:30px}.map-surface{width:100%;min-height:0;aspect-ratio:1000 / 470}.map-surface .map-zoom-button{width:28px;height:28px}}
      :root{
        --theme-side-bg:#10181d;
        --theme-header-bg:rgba(12,17,21,.92);
@@ -318,7 +326,7 @@
     const saveNodeSort = value => { try { localStorage.setItem('nyasm_node_sort', value); } catch (_) {} };
     const loadMapVisible = () => { try { return localStorage.getItem('nyasm_map_visible') !== 'false'; } catch (_) { return true; } };
      const saveMapVisible = value => { try { localStorage.setItem('nyasm_map_visible',String(Boolean(value))); } catch (_) {} };
-     const state = { user:null, area:routeArea(), view:routeArea()==='admin'?'nodes':'overview', dashboard:null, publicDashboard:null, controllerInfo:null, settings:null, alerts:null, nodes:[], selected:null, metrics:[], metricsHours:24, liveTelemetry:{}, telemetrySource:null, setup:false, showLogin:false, error:'', modal:null, busy:false, autoRefresh:true, refreshTimer:null, nodeSort:loadNodeSort(), mapVisible:loadMapVisible(), filters:{query:'',status:'all',group:'all'}, publicFilters:{query:'',status:'all',group:'all'} };
+     const state = { user:null, area:routeArea(), view:routeArea()==='admin'?'nodes':'overview', dashboard:null, publicDashboard:null, controllerInfo:null, settings:null, alerts:null, nodes:[], selected:null, metrics:[], metricsHours:24, liveTelemetry:{}, telemetrySource:null, setup:false, showLogin:false, error:'', modal:null, busy:false, autoRefresh:true, refreshTimer:null, nodeSort:loadNodeSort(), mapVisible:loadMapVisible(), mapPan:{x:0,y:0}, filters:{query:'',status:'all',group:'all'}, publicFilters:{query:'',status:'all',group:'all'} };
      const mapModeValues = ['country', 'region', 'city'];
      const loadMapMode = () => { try { const value = localStorage.getItem('nyasm_map_mode'); return mapModeValues.includes(value) ? value : 'country'; } catch (_) { return 'country'; } };
      const saveMapMode = value => { try { localStorage.setItem('nyasm_map_mode', value); } catch (_) {} };
@@ -463,17 +471,137 @@
     };
     const mapMarkerMarkup = group => { const x=Math.min(970,Math.max(30,Number(group.point[0]))); const y=Math.min(440,Math.max(30,Number(group.point[1]))); const count=group.nodes.length; const markerState=group.online===0?'offline':group.problem?'attention':'healthy'; const label=`${mapGroupTitle(group)}，${count} 个节点，在线 ${group.online} 个`; return `<g class="map-marker" data-map-key="${esc(group.key)}" data-map-state="${markerState}" transform="translate(${x} ${y})" role="button" tabindex="0" aria-label="${esc(label)}"><title>${esc(label)}</title><circle class="marker-ring" cx="0" cy="0" r="9"></circle><circle class="marker-core" cx="0" cy="0" r="7"></circle><circle class="marker-count" cx="15" cy="-15" r="11"></circle><text x="15" y="-15">${count>99?'99+':count}</text></g>`; };
     const mapStatusLegendMarkup = '<span class="geo-map-legend-item"><span class="geo-map-legend-dot"></span>全部在线</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-attention"></span>部分异常</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-offline"></span>暂无在线节点</span>';
-    const mapSurfaceMarkup = nodes => { const result=mapGroups(nodes,state.mapMode); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true">`; const markers=result.groups.map(mapMarkerMarkup).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item" title="${esc(mapGroupTitle(group))}"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(mapGroupTitle(group))} ${group.nodes.length}</span>`).join(''); const empty=result.groups.length?'':`<div class="map-empty">${result.unlocated?'暂时没有可定位的'+mapModeLabel(result.mode):'暂无节点地区数据'}</div>`; const legendMarkup=result.groups.length||result.unlocated?`<div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`:''; const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); return `<div class="map-surface" data-map-surface><div class="map-canvas" data-map-canvas style="transform:scale(${zoom})">${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点${esc(mapModeLabel(result.mode))}分布地图"><g data-map-markers>${markers}</g></svg></div>${empty}<div class="map-popover" data-map-popover hidden></div></div>${legendMarkup}`; };
+    const mapZoomControlsMarkup = () => { const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); return `<div class="map-zoom-controls" data-map-toolbar role="group" aria-label="地图缩放"><button type="button" class="map-zoom-button" data-map-zoom-out aria-label="缩小地图" title="缩小地图">−</button><span class="map-zoom-label" data-map-zoom-label>${Math.round(zoom*100)}%</span><button type="button" class="map-zoom-button" data-map-zoom-in aria-label="放大地图" title="放大地图">+</button><button type="button" class="map-zoom-button" data-map-zoom-reset aria-label="重置地图视图" title="重置地图视图">↺</button></div>`; };
+    const mapSurfaceMarkup = nodes => { const result=mapGroups(nodes,state.mapMode); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true" draggable="false">`; const markers=result.groups.map(mapMarkerMarkup).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item" title="${esc(mapGroupTitle(group))}"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(mapGroupTitle(group))} ${group.nodes.length}</span>`).join(''); const empty=result.groups.length?'':`<div class="map-empty">${result.unlocated?'暂时没有可定位的'+mapModeLabel(result.mode):'暂无节点地区数据'}</div>`; const legendMarkup=result.groups.length||result.unlocated?`<div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`:''; const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); return `<div class="map-surface" data-map-surface><div class="map-canvas" data-map-canvas style="transform:translate3d(0,0,0) scale(${zoom})">${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点${esc(mapModeLabel(result.mode))}分布地图"><g data-map-markers>${markers}</g></svg></div>${mapZoomControlsMarkup()}${empty}<div class="map-popover" data-map-popover hidden></div></div>${legendMarkup}`; };
     const mapGroupMarkup = group => { const flag=flagImageMarkup(group.code); return `${flag?`<span class="country-flag" aria-hidden="true">${flag}</span>`:''}<span>${esc(mapGroupTitle(group))}</span>`; };
     const mapNodeStatusLabel = status => ({online:'在线',offline:'离线',pending:'待上报',revoked:'已撤销'}[status]||'检查异常');
     const mapPopoverMarkup = (group, expanded=false) => { const online=group.nodes.filter(node=>node.status==='online').length; const nodes=expanded?group.nodes:group.nodes.slice(0,8); const list=nodes.map(node=>`<li><button type="button" class="map-node-link" data-map-node="${esc(node.id)}"><span>${esc(node.name||'未命名节点')}</span><span>${esc(mapNodeStatusLabel(node.status))}</span></button></li>`).join(''); const coordinates=group.mode==='country'?'国家级标记':(Number.isFinite(group.latitude)&&Number.isFinite(group.longitude)?`ipwho.is · ${group.latitude.toFixed(3)}, ${group.longitude.toFixed(3)}`:'待定位'); const more=!expanded&&group.nodes.length>8?`<button type="button" class="map-popover-expand" data-map-expand="${esc(group.key)}">展开全部节点（${group.nodes.length}）</button>`:''; return `<div class="map-popover-head"><strong>${mapGroupMarkup(group)} · ${group.nodes.length} 个节点</strong><button type="button" class="map-popover-close" data-map-close aria-label="关闭">×</button></div><div class="map-popover-meta">${esc(mapModeLabel(group.mode))} · 在线 ${online} · 其他 ${Math.max(0,group.nodes.length-online)}</div><div class="map-popover-coordinates">${esc(coordinates)}</div><ul class="map-popover-list">${list}</ul>${more}`; };
     const homeMapNodes = publicPage => (publicPage?state.publicDashboard?.nodes:state.dashboard?.nodes)||[];
     const mapModeButtonsMarkup = () => mapModeValues.map(mode => `<button type="button" class="map-mode-option" data-map-mode="${mode}" aria-pressed="${state.mapMode===mode}">${mapModeLabel(mode)}</button>`).join('');
-    const mapPanelMarkup = publicPage => { const nodes=homeMapNodes(publicPage); const result=mapGroups(nodes,state.mapMode); const total=nodes.length; const visible=state.mapVisible; return `<section class="geo-map-panel${visible?'':' map-collapsed'}" data-map-panel data-map-public="${publicPage?'true':'false'}"><div class="geo-map-head"><div><div class="public-kicker">NODE GEOGRAPHY</div><h3>节点地区分布</h3><p>按国家、Region 或 City 聚合；Region/City 位置使用 ipwho.is 返回的经纬度。</p></div><div class="geo-map-actions"><span class="map-summary" data-map-summary>${mapSummaryText(result,total)}</span><div class="map-mode-switch" data-map-mode-switch role="group" aria-label="地图聚合方式">${mapModeButtonsMarkup()}</div><div class="map-zoom-controls" role="group" aria-label="地图缩放"><button type="button" class="map-zoom-button" data-map-zoom-out aria-label="缩小地图" title="缩小地图">−</button><span class="map-zoom-label" data-map-zoom-label>${Math.round((Number(state.mapZoom)||1)*100)}%</span><button type="button" class="map-zoom-button" data-map-zoom-in aria-label="放大地图" title="放大地图">+</button><button type="button" class="map-zoom-button" data-map-zoom-reset aria-label="重置地图缩放" title="重置地图缩放">↺</button></div><label class="map-toggle"><input type="checkbox" data-map-toggle${visible?' checked':''}> 显示地图</label><button type="button" class="btn small map-reopen" data-map-reopen>显示地图</button></div></div><div class="geo-map-body" data-map-content>${mapSurfaceMarkup(nodes)}</div></section>`; };
-    const applyMapZoom = panel => { const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); state.mapZoom=zoom; const canvas=panel?.querySelector('[data-map-canvas]'); if(canvas)canvas.style.transform=`scale(${zoom})`; const label=panel?.querySelector('[data-map-zoom-label]'); if(label)label.textContent=Math.round(zoom*100)+'%'; };
+    const mapPanelMarkup = publicPage => { const nodes=homeMapNodes(publicPage); const result=mapGroups(nodes,state.mapMode); const total=nodes.length; const visible=state.mapVisible; return `<section class="geo-map-panel${visible?'':' map-collapsed'}" data-map-panel data-map-public="${publicPage?'true':'false'}"><div class="geo-map-head"><div><div class="public-kicker">NODE GEOGRAPHY</div><h3>节点地区分布</h3><p>按国家、Region 或 City 聚合；Region/City 位置使用 ipwho.is 返回的经纬度。</p></div><div class="geo-map-actions"><span class="map-summary" data-map-summary>${mapSummaryText(result,total)}</span><div class="map-mode-switch" data-map-mode-switch role="group" aria-label="地图聚合方式">${mapModeButtonsMarkup()}</div><label class="map-toggle"><input type="checkbox" data-map-toggle${visible?' checked':''}> 显示地图</label><button type="button" class="btn small map-reopen" data-map-reopen>显示地图</button></div></div><div class="geo-map-body" data-map-content>${mapSurfaceMarkup(nodes)}</div></section>`; };
+    const mapZoomValue = () => Math.max(1, Math.min(4, Number(state.mapZoom) || 1));
+    const mapPanLimits = (surface, zoom) => { const width=Number(surface?.clientWidth||0); const height=Number(surface?.clientHeight||0); return {x:Math.max(0,(zoom-1)*width/2),y:Math.max(0,(zoom-1)*height/2)}; };
+    const clampMapPan = (surface, pan=state.mapPan) => { const limits=mapPanLimits(surface,mapZoomValue()); const x=Number(pan?.x); const y=Number(pan?.y); return {x:Math.max(-limits.x,Math.min(limits.x,Number.isFinite(x)?x:0)),y:Math.max(-limits.y,Math.min(limits.y,Number.isFinite(y)?y:0))}; };
+    const applyMapView = (panel, immediate=false) => { const zoom=mapZoomValue(); state.mapZoom=zoom; const surface=panel?.querySelector('[data-map-surface]'); const canvas=surface?.querySelector('[data-map-canvas]'); const pan=clampMapPan(surface); state.mapPan=pan; if(canvas){canvas.style.transition=immediate?'none':'';canvas.style.transform=`translate3d(${pan.x}px,${pan.y}px,0) scale(${zoom})`;} const label=panel?.querySelector('[data-map-zoom-label]'); if(label)label.textContent=Math.round(zoom*100)+'%'; };
+    const applyMapZoom = panel => applyMapView(panel);
     const updateMapModeButtons = panel => panel?.querySelectorAll('[data-map-mode]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.mapMode===state.mapMode)));
     const refreshMapPanel = panel => { if(!panel)return; const publicPage=panel.dataset.mapPublic==='true'; const nodes=homeMapNodes(publicPage); const result=mapGroups(nodes,state.mapMode); const content=panel.querySelector('[data-map-content]'); if(content)content.innerHTML=mapSurfaceMarkup(nodes); const summary=panel.querySelector('[data-map-summary]'); if(summary)summary.textContent=mapSummaryText(result,nodes.length); panel.querySelector('[data-map-popover]')?.setAttribute('hidden',''); updateMapModeButtons(panel); applyMapZoom(panel); };
-    const bindMapControls = page => { const panel=page?.querySelector('[data-map-panel]'); if(!panel||panel.dataset.mapBound==='true')return; panel.dataset.mapBound='true'; const toggle=panel.querySelector('[data-map-toggle]'); const reopen=panel.querySelector('[data-map-reopen]'); const setVisible=visible=>{state.mapVisible=Boolean(visible);saveMapVisible(state.mapVisible);panel.classList.toggle('map-collapsed',!state.mapVisible);if(toggle)toggle.checked=state.mapVisible;}; toggle?.addEventListener('change',event=>setVisible(event.target.checked)); reopen?.addEventListener('click',()=>setVisible(true)); panel.addEventListener('click',event=>{const modeButton=event.target.closest('[data-map-mode]');if(modeButton){const mode=modeButton.dataset.mapMode;if(mapModeValues.includes(mode)&&mode!==state.mapMode){state.mapMode=mode;saveMapMode(mode);state.mapZoom=1;refreshMapPanel(panel);}return;}const zoomButton=event.target.closest('[data-map-zoom-in],[data-map-zoom-out],[data-map-zoom-reset]');if(zoomButton){if(zoomButton.hasAttribute('data-map-zoom-in'))state.mapZoom+=.5;else if(zoomButton.hasAttribute('data-map-zoom-out'))state.mapZoom-=.5;else state.mapZoom=1;applyMapZoom(panel);return;}const close=event.target.closest('[data-map-close]');if(close){panel.querySelector('[data-map-popover]')?.setAttribute('hidden','');return;}const expand=event.target.closest('[data-map-expand]');if(expand){const publicPage=panel.dataset.mapPublic==='true';const group=mapGroups(homeMapNodes(publicPage),state.mapMode).groups.find(item=>item.key===expand.dataset.mapExpand);const popover=panel.querySelector('[data-map-popover]');if(group&&popover){popover.innerHTML=mapPopoverMarkup(group,true);popover.hidden=false;}return;}const nodeButton=event.target.closest('[data-map-node]');if(nodeButton){const publicPage=panel.dataset.mapPublic==='true';const node=homeMapNodes(publicPage).find(item=>item.id===nodeButton.dataset.mapNode);panel.querySelector('[data-map-popover]')?.setAttribute('hidden','');if(node)window.nyasmOpenNodeDetail?.(node,!publicPage);return;}const marker=event.target.closest('[data-map-key]');if(!marker)return;const publicPage=panel.dataset.mapPublic==='true';const result=mapGroups(homeMapNodes(publicPage),state.mapMode);const group=result.groups.find(item=>item.key===marker.dataset.mapKey);const surface=panel.querySelector('[data-map-surface]');const popover=surface?.querySelector('[data-map-popover]');if(!group||!surface||!popover)return;popover.innerHTML=mapPopoverMarkup(group);popover.hidden=false;const markerBox=marker.getBoundingClientRect();const surfaceBox=surface.getBoundingClientRect();const left=Math.max(12,Math.min(Math.max(12,surfaceBox.width-302),markerBox.left-surfaceBox.left+12));const top=Math.max(12,markerBox.top-surfaceBox.top+markerBox.height+10);popover.style.left=left+'px';popover.style.top=top+'px';}); panel.addEventListener('keydown',event=>{const marker=event.target.closest('[data-map-key]');if(marker&&(event.key==='Enter'||event.key===' ')){event.preventDefault();marker.dispatchEvent(new MouseEvent('click',{bubbles:true}));}}); };
+    const bindMapPan = panel => {
+      if (!panel || panel.dataset.mapPanBound === 'true') return;
+      panel.dataset.mapPanBound = 'true';
+      const drag = { surface:null, pointerId:null, startX:0, startY:0, originX:0, originY:0, moved:false };
+      const closest = (target, selector) => target instanceof Element ? target.closest(selector) : null;
+      const finish = event => {
+        if (!drag.surface || event.pointerId !== drag.pointerId) return;
+        const surface = drag.surface;
+        if (surface.hasPointerCapture?.(drag.pointerId)) surface.releasePointerCapture(drag.pointerId);
+        surface.removeAttribute('data-map-dragging');
+        if (drag.moved) surface.dataset.mapSuppressClick = 'true';
+        drag.surface = null;
+        drag.pointerId = null;
+        drag.moved = false;
+        applyMapView(panel);
+      };
+      panel.addEventListener('pointerdown', event => {
+        if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        const surface = closest(event.target, '[data-map-surface]');
+        if (!surface || closest(event.target, '[data-map-toolbar],[data-map-popover],[data-map-key]')) return;
+        const canvas = surface.querySelector('[data-map-canvas]');
+        if (!canvas) return;
+        const pan = clampMapPan(surface);
+        drag.surface = surface;
+        drag.pointerId = event.pointerId;
+        drag.startX = event.clientX;
+        drag.startY = event.clientY;
+        drag.originX = pan.x;
+        drag.originY = pan.y;
+        drag.moved = false;
+        delete surface.dataset.mapSuppressClick;
+        surface.dataset.mapDragging = 'true';
+        canvas.style.transition = 'none';
+        surface.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+      });
+      panel.addEventListener('pointermove', event => {
+        if (!drag.surface || event.pointerId !== drag.pointerId) return;
+        const dx = event.clientX - drag.startX;
+        const dy = event.clientY - drag.startY;
+        if (!drag.moved && Math.hypot(dx, dy) > 3) {
+          drag.moved = true;
+          drag.surface.querySelector('[data-map-popover]')?.setAttribute('hidden', '');
+        }
+        state.mapPan = { x:drag.originX + dx, y:drag.originY + dy };
+        applyMapView(panel, true);
+        event.preventDefault();
+      });
+      panel.addEventListener('pointerup', finish);
+      panel.addEventListener('pointercancel', finish);
+    };
+    const bindMapControls = page => {
+      const panel=page?.querySelector('[data-map-panel]');
+      if(!panel||panel.dataset.mapBound==='true')return;
+      panel.dataset.mapBound='true';
+      bindMapPan(panel);
+      const toggle=panel.querySelector('[data-map-toggle]');
+      const reopen=panel.querySelector('[data-map-reopen]');
+      const setVisible=visible=>{state.mapVisible=Boolean(visible);saveMapVisible(state.mapVisible);panel.classList.toggle('map-collapsed',!state.mapVisible);if(toggle)toggle.checked=state.mapVisible;};
+      toggle?.addEventListener('change',event=>setVisible(event.target.checked));
+      reopen?.addEventListener('click',()=>setVisible(true));
+      panel.addEventListener('click',event=>{
+        const clickTarget=event.target instanceof Element?event.target:null;
+        const clickedSurface=clickTarget?.closest('[data-map-surface]');
+        const marker=clickTarget?.closest('[data-map-key]');
+        if(marker&&clickedSurface?.dataset.mapSuppressClick==='true'){delete clickedSurface.dataset.mapSuppressClick;return;}
+        const modeButton=clickTarget?.closest('[data-map-mode]');
+        if(modeButton){
+          const mode=modeButton.dataset.mapMode;
+          if(mapModeValues.includes(mode)&&mode!==state.mapMode){state.mapMode=mode;saveMapMode(mode);state.mapZoom=1;state.mapPan={x:0,y:0};refreshMapPanel(panel);}
+          return;
+        }
+        const zoomButton=clickTarget?.closest('[data-map-zoom-in],[data-map-zoom-out],[data-map-zoom-reset]');
+        if(zoomButton){
+          if(zoomButton.hasAttribute('data-map-zoom-in'))state.mapZoom+=.5;
+          else if(zoomButton.hasAttribute('data-map-zoom-out'))state.mapZoom-=.5;
+          else{state.mapZoom=1;state.mapPan={x:0,y:0};}
+          applyMapZoom(panel);
+          return;
+        }
+        const close=clickTarget?.closest('[data-map-close]');
+        if(close){panel.querySelector('[data-map-popover]')?.setAttribute('hidden','');return;}
+        const expand=clickTarget?.closest('[data-map-expand]');
+        if(expand){
+          const publicPage=panel.dataset.mapPublic==='true';
+          const group=mapGroups(homeMapNodes(publicPage),state.mapMode).groups.find(item=>item.key===expand.dataset.mapExpand);
+          const popover=panel.querySelector('[data-map-popover]');
+          if(group&&popover){popover.innerHTML=mapPopoverMarkup(group,true);popover.hidden=false;}
+          return;
+        }
+        const nodeButton=clickTarget?.closest('[data-map-node]');
+        if(nodeButton){
+          const publicPage=panel.dataset.mapPublic==='true';
+          const node=homeMapNodes(publicPage).find(item=>item.id===nodeButton.dataset.mapNode);
+          panel.querySelector('[data-map-popover]')?.setAttribute('hidden','');
+          if(node)window.nyasmOpenNodeDetail?.(node,!publicPage);
+          return;
+        }
+        if(!marker)return;
+        const publicPage=panel.dataset.mapPublic==='true';
+        const result=mapGroups(homeMapNodes(publicPage),state.mapMode);
+        const group=result.groups.find(item=>item.key===marker.dataset.mapKey);
+        const surface=panel.querySelector('[data-map-surface]');
+        const popover=surface?.querySelector('[data-map-popover]');
+        if(!group||!surface||!popover)return;
+        popover.innerHTML=mapPopoverMarkup(group);
+        popover.hidden=false;
+        const markerBox=marker.getBoundingClientRect();
+        const surfaceBox=surface.getBoundingClientRect();
+        const left=Math.max(12,Math.min(Math.max(12,surfaceBox.width-302),markerBox.left-surfaceBox.left+12));
+        const top=Math.max(12,markerBox.top-surfaceBox.top+markerBox.height+10);
+        popover.style.left=left+'px';
+        popover.style.top=top+'px';
+      });
+      panel.addEventListener('keydown',event=>{const marker=event.target.closest('[data-map-key]');if(marker&&(event.key==='Enter'||event.key===' ')){event.preventDefault();marker.dispatchEvent(new MouseEvent('click',{bubbles:true}));}});
+    };
     const updateHomeMap = publicPage => { const dashboard=publicPage?state.publicDashboard:state.dashboard; const shouldShow=dashboard?.map_enabled!==false; const page=document.querySelector(publicPage?'.public-page':'.private-page'); const panel=page?.querySelector('[data-map-panel]'); if((shouldShow&&!panel)||(!shouldShow&&panel)){render();return;} if(!panel)return; refreshMapPanel(panel); };
     const api = async (path, options={}) => { const controller=typeof AbortController==='function'?new AbortController():null; const timeout=setTimeout(()=>controller?.abort(),15000); let response; try { response=await fetch(path, {credentials:'same-origin', headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options, ...(controller?{signal:controller.signal}:{})}); } catch (error) { if (error?.name==='AbortError') throw new Error('请求超时，请稍后重试'); throw error; } finally { clearTimeout(timeout); } let body=null; try { body=await response.json(); } catch (_) {} if (!response.ok) { if (response.status===401 && path!=='/api/auth/login') { state.user=null; stopTelemetryStream(); state.showLogin=state.area==='admin'; startAutoRefresh(); } throw new Error(body?.error || response.statusText); } return body; };
     const toast = (message, error=false) => { const el=document.createElement('div'); el.className='toast'+(error?' error':''); el.textContent=message; document.body.appendChild(el); setTimeout(()=>el.remove(),3200); };
