@@ -125,6 +125,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			ip_override TEXT NOT NULL DEFAULT '',
 			country TEXT NOT NULL DEFAULT '',
 			country_code TEXT NOT NULL DEFAULT '',
+			region TEXT NOT NULL DEFAULT '',
+			region_code TEXT NOT NULL DEFAULT '',
+			city TEXT NOT NULL DEFAULT '',
+			latitude REAL NOT NULL DEFAULT 0,
+			longitude REAL NOT NULL DEFAULT 0,
 			country_lookup_ip TEXT NOT NULL DEFAULT '',
 			country_override TEXT NOT NULL DEFAULT '',
 			last_seen TEXT NOT NULL DEFAULT '',
@@ -257,11 +262,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-const countryDataMigrationKey = "country_code_normalized_v2_public_ip"
+const geoDataMigrationKey = "geo_location_normalized_v3_ipwho"
 
 func (s *Store) migrateCountryData(ctx context.Context) error {
 	var marker string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, countryDataMigrationKey).Scan(&marker)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, geoDataMigrationKey).Scan(&marker)
 	if err == nil && marker == "1" {
 		return nil
 	}
@@ -305,7 +310,8 @@ func (s *Store) migrateCountryData(ctx context.Context) error {
 		// every existing node from its current IP under the new code policy.
 		override := model.CountryCodeFromValue(row.countryOverride)
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE nodes SET country = '', country_code = '', country_lookup_ip = ?, country_override = ?
+			UPDATE nodes SET country = '', country_code = '', region = '', region_code = '', city = '', latitude = 0, longitude = 0,
+				country_lookup_ip = ?, country_override = ?
 			WHERE id = ?`, "", override, row.id); err != nil {
 			rollback()
 			return err
@@ -313,7 +319,7 @@ func (s *Store) migrateCountryData(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO settings (key, value) VALUES (?, '1')
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, countryDataMigrationKey); err != nil {
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, geoDataMigrationKey); err != nil {
 		rollback()
 		return err
 	}
@@ -347,6 +353,11 @@ func (s *Store) ensureNodeColumns(ctx context.Context) error {
 		"ip_override":         "TEXT NOT NULL DEFAULT ''",
 		"country":             "TEXT NOT NULL DEFAULT ''",
 		"country_code":        "TEXT NOT NULL DEFAULT ''",
+		"region":              "TEXT NOT NULL DEFAULT ''",
+		"region_code":         "TEXT NOT NULL DEFAULT ''",
+		"city":                "TEXT NOT NULL DEFAULT ''",
+		"latitude":            "REAL NOT NULL DEFAULT 0",
+		"longitude":           "REAL NOT NULL DEFAULT 0",
 		"country_lookup_ip":   "TEXT NOT NULL DEFAULT ''",
 		"country_override":    "TEXT NOT NULL DEFAULT ''",
 		"desired_version":     "TEXT NOT NULL DEFAULT ''",
@@ -453,6 +464,7 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash string, tokenCiphertext ...string) error {
 	now := time.Now().UTC()
 	model.NormalizeNodeCountry(&node)
+	model.NormalizeNodeGeo(&node)
 	if node.CreatedAt.IsZero() {
 		node.CreatedAt = now
 	}
@@ -469,10 +481,12 @@ func (s *Store) CreateNode(ctx context.Context, node model.Node, tokenHash strin
 	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO nodes (id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version,
-			last_ip, public_ipv4, public_ipv6, ip_override, country, country_code, country_lookup_ip, country_override, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+			last_ip, public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
+			country_lookup_ip, country_override, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
 		node.ID, node.Name, node.Group, string(tags), tokenHash, ciphertext, node.Status, node.AgentVersion,
-		node.PublicIPv4, node.PublicIPv6, node.IPOverride, node.Country, node.CountryCode, node.CountryOverride,
+		node.PublicIPv4, node.PublicIPv6, node.IPOverride, node.Country, node.CountryCode, node.Region, node.RegionCode,
+		node.City, node.Latitude, node.Longitude, node.CountryOverride,
 		node.CreatedAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
@@ -503,10 +517,18 @@ func (s *Store) UpdateNodeMetadataWithOverrides(ctx context.Context, id, name, g
 		UPDATE nodes SET name = ?, group_name = ?, tags_json = ?, ip_override = ?, country_override = ?,
 		country = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE country END,
 		country_code = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE country_code END,
+		region = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE region END,
+		region_code = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE region_code END,
+		city = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE city END,
+		latitude = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN 0 ELSE latitude END,
+		longitude = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN 0 ELSE longitude END,
 		country_lookup_ip = CASE WHEN (CASE WHEN ? <> '' THEN ? WHEN public_ipv4 <> '' THEN public_ipv4 ELSE public_ipv6 END) <> `+nodeAutomaticIPSQL+` THEN '' ELSE country_lookup_ip END,
 		updated_at = ? WHERE id = ?`,
 		name, group, string(tagsJSON), ipOverride, countryOverride,
-		ipOverride, ipOverride, ipOverride, ipOverride, ipOverride, ipOverride,
+		ipOverride, ipOverride, ipOverride, ipOverride,
+		ipOverride, ipOverride, ipOverride, ipOverride,
+		ipOverride, ipOverride, ipOverride, ipOverride,
+		ipOverride, ipOverride, ipOverride, ipOverride,
 		time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return model.Node{}, err
@@ -542,7 +564,8 @@ func (s *Store) GetNodeCredential(ctx context.Context, id string) (NodeCredentia
 func (s *Store) ListNodes(ctx context.Context) ([]model.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
-		       public_ipv4, public_ipv6, ip_override, country, country_code, country_lookup_ip, country_override,
+		       public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
+		       country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
 		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes ORDER BY name COLLATE NOCASE, id`)
@@ -602,12 +625,17 @@ func (s *Store) UpdateReport(ctx context.Context, report model.Report) error {
 		UPDATE nodes SET status = ?, agent_version = ?, public_ipv4 = ?, public_ipv6 = ?, last_seen = ?,
 		country = CASE WHEN ? THEN '' ELSE country END,
 		country_code = CASE WHEN ? THEN '' ELSE country_code END,
+		region = CASE WHEN ? THEN '' ELSE region END,
+		region_code = CASE WHEN ? THEN '' ELSE region_code END,
+		city = CASE WHEN ? THEN '' ELSE city END,
+		latitude = CASE WHEN ? THEN 0 ELSE latitude END,
+		longitude = CASE WHEN ? THEN 0 ELSE longitude END,
 		country_lookup_ip = CASE WHEN ? THEN '' ELSE country_lookup_ip END,
 		first_seen = CASE WHEN first_seen = '' THEN ? ELSE first_seen END,
 		updated_at = ?, sequence = ?, system_json = ?, last_report_json = ?
 		WHERE id = ? AND revoked = 0`,
 		model.NodeOnline, report.AgentVersion, newIPv4, newIPv6, nowText,
-		publicIPChanged, publicIPChanged, publicIPChanged,
+		publicIPChanged, publicIPChanged, publicIPChanged, publicIPChanged, publicIPChanged, publicIPChanged, publicIPChanged, publicIPChanged,
 		nowText, nowText, report.Sequence, string(systemJSON), string(reportJSON), report.NodeID)
 	if err != nil {
 		return err
@@ -733,7 +761,7 @@ func (s *Store) compactLegacyMetrics(ctx context.Context) error {
 	}
 }
 
-func (s *Store) ClaimCountryLookup(ctx context.Context, id, ip string) (bool, error) {
+func (s *Store) ClaimGeoLookup(ctx context.Context, id, ip string) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE nodes SET country_lookup_ip = ?
 		WHERE id = ? AND revoked = 0
@@ -754,18 +782,18 @@ func (s *Store) ClaimCountryLookup(ctx context.Context, id, ip string) (bool, er
 	return false, nil
 }
 
-func (s *Store) SaveNodeCountry(ctx context.Context, id, ip, _ string, countryCode string) error {
-	countryCode = model.NormalizeCountryCode(countryCode)
-	if countryCode == "" {
+func (s *Store) SaveNodeGeoLocation(ctx context.Context, id, ip string, location model.GeoLocation) error {
+	model.NormalizeGeoLocation(&location)
+	if location.CountryCode == "" {
 		return fmt.Errorf("invalid country code")
 	}
-	country := model.CountryName(countryCode)
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE nodes SET country = ?, country_code = ?, updated_at = ?
+		UPDATE nodes SET country = ?, country_code = ?, region = ?, region_code = ?, city = ?, latitude = ?, longitude = ?, updated_at = ?
 		WHERE id = ? AND revoked = 0
 		  AND `+nodeAutomaticIPSQL+` = ?
 		  AND country_lookup_ip = ?`,
-		country, countryCode, time.Now().UTC().Format(time.RFC3339Nano), id, ip, ip)
+		location.Country, location.CountryCode, location.Region, location.RegionCode, location.City, location.Latitude, location.Longitude,
+		time.Now().UTC().Format(time.RFC3339Nano), id, ip, ip)
 	if err != nil {
 		return err
 	}
@@ -775,9 +803,9 @@ func (s *Store) SaveNodeCountry(ctx context.Context, id, ip, _ string, countryCo
 	return nil
 }
 
-func (s *Store) ResetCountryLookup(ctx context.Context, id string) error {
+func (s *Store) ResetGeoLookup(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE nodes SET country_lookup_ip = ''
+		UPDATE nodes SET country = '', country_code = '', region = '', region_code = '', city = '', latitude = 0, longitude = 0, country_lookup_ip = ''
 		WHERE id = ? AND country = ''`, id)
 	if err != nil {
 		return err
@@ -1363,7 +1391,8 @@ type scanner interface{ Scan(dest ...any) error }
 func (s *Store) nodeRecord(ctx context.Context, id string) (nodeRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
-		       public_ipv4, public_ipv6, ip_override, country, country_code, country_lookup_ip, country_override,
+		       public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
+		       country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
 		       desired_version, update_status, update_error, update_requested_at, update_finished_at
 		FROM nodes WHERE id = ?`, id)
@@ -1378,7 +1407,8 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	var updateStatus, updateRequestedAt, updateFinishedAt string
 	if err := row.Scan(&record.Node.ID, &record.Node.Name, &record.Node.Group, &tagsJSON, &record.TokenHash, &record.TokenCiphertext,
 		&status, &revoked, &record.Node.AgentVersion, &record.Node.LastIP, &record.Node.PublicIPv4, &record.Node.PublicIPv6, &record.Node.IPOverride,
-		&record.Node.Country, &record.Node.CountryCode, &record.CountryLookupIP, &record.Node.CountryOverride,
+		&record.Node.Country, &record.Node.CountryCode, &record.Node.Region, &record.Node.RegionCode, &record.Node.City,
+		&record.Node.Latitude, &record.Node.Longitude, &record.CountryLookupIP, &record.Node.CountryOverride,
 		&lastSeen, &firstSeen,
 		&created, &updated, &record.Node.Sequence, &systemJSON, &reportJSON, &record.Node.DesiredVersion,
 		&updateStatus, &record.Node.UpdateError, &updateRequestedAt, &updateFinishedAt); err != nil {
@@ -1387,6 +1417,7 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 	record.Node.Status = model.NodeStatus(status)
 	record.Revoked = revoked == 1
 	model.NormalizeNodeCountry(&record.Node)
+	model.NormalizeNodeGeo(&record.Node)
 	_ = json.Unmarshal([]byte(tagsJSON), &record.Node.Tags)
 	_ = json.Unmarshal([]byte(systemJSON), &record.Node.System)
 	var report model.Report

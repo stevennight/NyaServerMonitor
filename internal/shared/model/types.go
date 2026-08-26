@@ -26,6 +26,11 @@ type Node struct {
 	IPOverride        string           `json:"ip_override,omitempty"`
 	Country           string           `json:"country,omitempty"`
 	CountryCode       string           `json:"country_code,omitempty"`
+	Region            string           `json:"region,omitempty"`
+	RegionCode        string           `json:"region_code,omitempty"`
+	City              string           `json:"city,omitempty"`
+	Latitude          float64          `json:"latitude,omitempty"`
+	Longitude         float64          `json:"longitude,omitempty"`
 	CountryOverride   string           `json:"country_override,omitempty"`
 	LastSeen          time.Time        `json:"last_seen,omitempty"`
 	FirstSeen         time.Time        `json:"first_seen,omitempty"`
@@ -149,6 +154,7 @@ type LiveTelemetry struct {
 	NodeID              string              `json:"node_id"`
 	Sequence            uint64              `json:"sequence"`
 	ObservedAtUnixMilli int64               `json:"observed_at_unix_milli"`
+	LiveIntervalMillis  int64               `json:"live_interval_millis,omitempty"`
 	AgentVersion        string              `json:"agent_version,omitempty"`
 	System              SystemInfo          `json:"system,omitempty"`
 	Metrics             MetricsSnapshot     `json:"metrics,omitempty"`
@@ -305,6 +311,11 @@ type PublicNode struct {
 	Arch            string     `json:"arch,omitempty"`
 	Country         string     `json:"country,omitempty"`
 	CountryCode     string     `json:"country_code,omitempty"`
+	Region          string     `json:"region,omitempty"`
+	RegionCode      string     `json:"region_code,omitempty"`
+	City            string     `json:"city,omitempty"`
+	Latitude        float64    `json:"latitude,omitempty"`
+	Longitude       float64    `json:"longitude,omitempty"`
 	UptimeSeconds   uint64     `json:"uptime_seconds,omitempty"`
 	NetworkInBytes  uint64     `json:"network_in_bytes,omitempty"`
 	NetworkOutBytes uint64     `json:"network_out_bytes,omitempty"`
@@ -314,6 +325,16 @@ type PublicNode struct {
 	DiskPercent     int        `json:"disk_percent"`
 	ChecksUp        int        `json:"checks_up"`
 	ChecksTotal     int        `json:"checks_total"`
+}
+
+type GeoLocation struct {
+	Country     string  `json:"country,omitempty"`
+	CountryCode string  `json:"country_code,omitempty"`
+	Region      string  `json:"region,omitempty"`
+	RegionCode  string  `json:"region_code,omitempty"`
+	City        string  `json:"city,omitempty"`
+	Latitude    float64 `json:"latitude,omitempty"`
+	Longitude   float64 `json:"longitude,omitempty"`
 }
 
 type PublicMetricSample struct {

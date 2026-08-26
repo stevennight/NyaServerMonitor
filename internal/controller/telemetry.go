@@ -94,6 +94,7 @@ type publicLiveTelemetry struct {
 	NodeID              string                    `json:"node_id"`
 	Sequence            uint64                    `json:"sequence"`
 	ObservedAtUnixMilli int64                     `json:"observed_at_unix_milli"`
+	LiveIntervalMillis  int64                     `json:"live_interval_millis,omitempty"`
 	MetricsAvailable    bool                      `json:"metrics_available"`
 	CPUPercent          int                       `json:"cpu_percent,omitempty"`
 	MemoryPercent       int                       `json:"memory_percent,omitempty"`
@@ -115,6 +116,7 @@ func sanitizePublicLiveTelemetry(telemetry model.LiveTelemetry) publicLiveTeleme
 		NodeID:              publicNodeID(telemetry.NodeID),
 		Sequence:            telemetry.Sequence,
 		ObservedAtUnixMilli: telemetry.ObservedAtUnixMilli,
+		LiveIntervalMillis:  telemetry.LiveIntervalMillis,
 		MetricsAvailable:    telemetry.MetricsAvailable,
 	}
 	var networkIn, networkOut uint64

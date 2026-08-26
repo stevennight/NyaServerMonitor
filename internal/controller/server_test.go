@@ -89,7 +89,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Group: "production", Tags: []string{"web", "edge"}, CountryOverride: "JP", Status: model.NodePending}, "hash"); err != nil {
+	if err := st.CreateNode(ctx, model.Node{ID: "node_public", Name: "Public status", Group: "production", Tags: []string{"web", "edge"}, CountryOverride: "JP", Region: "Kanto", RegionCode: "13", City: "Tokyo", Latitude: 35.6762, Longitude: 139.6503, Status: model.NodePending}, "hash"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateNode(ctx, model.Node{ID: "node_revoked", Name: "Hidden revoked", Status: model.NodeRevoked}, "hash"); err != nil {
@@ -128,7 +128,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		t.Fatalf("unexpected public dashboard: %#v", dashboard)
 	}
 	publicNode := dashboard.Nodes[0]
-	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CountryCode != "JP" || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.NetworkInBytes != 4096 || publicNode.NetworkOutBytes != 2048 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
+	if publicNode.Name != "Public status" || publicNode.Status != model.NodeOnline || publicNode.Group != "production" || len(publicNode.Tags) != 2 || publicNode.Country != "日本" || publicNode.CountryCode != "JP" || publicNode.Region != "Kanto" || publicNode.RegionCode != "13" || publicNode.City != "Tokyo" || publicNode.Latitude != 35.6762 || publicNode.Longitude != 139.6503 || publicNode.CPUPercent != 37 || publicNode.MemoryPercent != 60 || publicNode.DiskPercent != 80 || publicNode.NetworkInBytes != 4096 || publicNode.NetworkOutBytes != 2048 || publicNode.ChecksUp != 0 || publicNode.ChecksTotal != 1 {
 		t.Fatalf("unexpected public node: %#v", publicNode)
 	}
 	body := response.Body.String()

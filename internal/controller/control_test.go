@@ -262,6 +262,35 @@ func TestNodeWebSocketTelemetryReachesAuthenticatedStream(t *testing.T) {
 	}
 }
 
+func TestValidateLiveTelemetryInterval(t *testing.T) {
+	base := model.LiveTelemetry{
+		NodeID:              "node_interval",
+		Sequence:            1,
+		ObservedAtUnixMilli: time.Now().UnixMilli(),
+	}
+	tests := []struct {
+		name     string
+		interval int64
+		wantErr  bool
+	}{
+		{name: "legacy message", interval: 0},
+		{name: "minimum", interval: 1000},
+		{name: "maximum", interval: maxTelemetryIntervalMillis},
+		{name: "below minimum", interval: 999, wantErr: true},
+		{name: "above maximum", interval: maxTelemetryIntervalMillis + 1, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			telemetry := base
+			telemetry.LiveIntervalMillis = test.interval
+			err := validateLiveTelemetry(base.NodeID, &telemetry)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateLiveTelemetry(%d) error = %v, wantErr=%v", test.interval, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestNodeWebSocketReceivesSignedUpdate(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "server.db"))

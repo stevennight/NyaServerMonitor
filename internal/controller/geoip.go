@@ -26,13 +26,18 @@ type geoIPLookup struct {
 }
 
 type geoIPResponse struct {
-	Success     *bool  `json:"success"`
-	Error       bool   `json:"error"`
-	Message     string `json:"message"`
-	Country     string `json:"country"`
-	CountryName string `json:"country_name"`
-	CountryCode string `json:"country_code"`
-	CountryAlt  string `json:"countryCode"`
+	Success     *bool   `json:"success"`
+	Error       bool    `json:"error"`
+	Message     string  `json:"message"`
+	Country     string  `json:"country"`
+	CountryName string  `json:"country_name"`
+	CountryCode string  `json:"country_code"`
+	CountryAlt  string  `json:"countryCode"`
+	Region      string  `json:"region"`
+	RegionCode  string  `json:"region_code"`
+	City        string  `json:"city"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
 }
 
 func newGeoIPLookup(endpoint string) *geoIPLookup {
@@ -46,40 +51,40 @@ func newGeoIPLookup(endpoint string) *geoIPLookup {
 	}
 }
 
-func (g *geoIPLookup) lookup(ctx context.Context, ip string) (string, string, error) {
+func (g *geoIPLookup) lookup(ctx context.Context, ip string) (model.GeoLocation, error) {
 	if g == nil {
-		return "", "", errors.New("geoip lookup is disabled")
+		return model.GeoLocation{}, errors.New("geoip lookup is disabled")
 	}
 	parsedIP := net.ParseIP(strings.Trim(ip, "[]"))
 	if !eligibleGeoIP(parsedIP) {
-		return "", "", errors.New("IP is not eligible for country lookup")
+		return model.GeoLocation{}, errors.New("IP is not eligible for geoip lookup")
 	}
 	if !strings.Contains(g.endpoint, "{ip}") {
-		return "", "", errors.New("geoip URL must contain {ip}")
+		return model.GeoLocation{}, errors.New("geoip URL must contain {ip}")
 	}
 	endpoint := strings.ReplaceAll(g.endpoint, "{ip}", url.PathEscape(parsedIP.String()))
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("create geoip request: %w", err)
+		return model.GeoLocation{}, fmt.Errorf("create geoip request: %w", err)
 	}
 	response, err := g.client.Do(request)
 	if err != nil {
-		return "", "", fmt.Errorf("geoip request: %w", err)
+		return model.GeoLocation{}, fmt.Errorf("geoip request: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", "", fmt.Errorf("geoip returned HTTP %d", response.StatusCode)
+		return model.GeoLocation{}, fmt.Errorf("geoip returned HTTP %d", response.StatusCode)
 	}
 	var payload geoIPResponse
 	decoder := json.NewDecoder(io.LimitReader(response.Body, geoIPMaxBody))
 	if err := decoder.Decode(&payload); err != nil {
-		return "", "", fmt.Errorf("decode geoip response: %w", err)
+		return model.GeoLocation{}, fmt.Errorf("decode geoip response: %w", err)
 	}
 	if payload.Success != nil && !*payload.Success || payload.Error {
 		if strings.TrimSpace(payload.Message) == "" {
-			return "", "", errors.New("geoip lookup failed")
+			return model.GeoLocation{}, errors.New("geoip lookup failed")
 		}
-		return "", "", errors.New(strings.TrimSpace(payload.Message))
+		return model.GeoLocation{}, errors.New(strings.TrimSpace(payload.Message))
 	}
 	countryCode := strings.TrimSpace(payload.CountryCode)
 	if countryCode == "" {
@@ -87,9 +92,19 @@ func (g *geoIPLookup) lookup(ctx context.Context, ip string) (string, string, er
 	}
 	countryCode = model.NormalizeCountryCode(countryCode)
 	if countryCode == "" {
-		return "", "", errors.New("geoip response did not contain a valid country_code")
+		return model.GeoLocation{}, errors.New("geoip response did not contain a valid country_code")
 	}
-	return model.CountryName(countryCode), countryCode, nil
+	location := model.GeoLocation{
+		Country:     model.CountryName(countryCode),
+		CountryCode: countryCode,
+		Region:      payload.Region,
+		RegionCode:  payload.RegionCode,
+		City:        payload.City,
+		Latitude:    payload.Latitude,
+		Longitude:   payload.Longitude,
+	}
+	model.NormalizeGeoLocation(&location)
+	return location, nil
 }
 
 func eligibleGeoIP(ip net.IP) bool {

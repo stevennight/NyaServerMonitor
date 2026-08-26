@@ -79,7 +79,7 @@ func TestUpdateNodeMetadata(t *testing.T) {
 	}
 }
 
-func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
+func TestNodeIPAndGeoOverridesAndLookupClaims(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(ctx, t.TempDir()+"/network.db")
 	if err != nil {
@@ -102,19 +102,21 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 	if err := st.UpdateReport(ctx, report); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := st.ClaimCountryLookup(ctx, node.ID, "198.51.100.10")
+	claimed, err := st.ClaimGeoLookup(ctx, node.ID, "198.51.100.10")
 	if err != nil || !claimed {
-		t.Fatalf("first country lookup claim = %v, err=%v", claimed, err)
+		t.Fatalf("first geo lookup claim = %v, err=%v", claimed, err)
 	}
-	if err := st.SaveNodeCountry(ctx, node.ID, "198.51.100.10", "Exampleland", "EX"); err != nil {
+	if err := st.SaveNodeGeoLocation(ctx, node.ID, "198.51.100.10", model.GeoLocation{
+		CountryCode: "EX", Region: "California", RegionCode: "CA", City: "San Jose", Latitude: 37.3362, Longitude: -121.8906,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err = st.ClaimCountryLookup(ctx, node.ID, "198.51.100.10")
+	claimed, err = st.ClaimGeoLookup(ctx, node.ID, "198.51.100.10")
 	if err != nil || claimed {
-		t.Fatalf("same-IP country lookup claim = %v, err=%v", claimed, err)
+		t.Fatalf("same-IP geo lookup claim = %v, err=%v", claimed, err)
 	}
 	got, err := st.GetNode(ctx, node.ID)
-	if err != nil || got.LastIP != "" || got.PublicIPv4 != "198.51.100.10" || got.PublicIPv6 != "2001:db8::10" || got.Country != "EX" || got.CountryCode != "EX" {
+	if err != nil || got.LastIP != "" || got.PublicIPv4 != "198.51.100.10" || got.PublicIPv6 != "2001:db8::10" || got.Country != "EX" || got.CountryCode != "EX" || got.Region != "California" || got.RegionCode != "CA" || got.City != "San Jose" || got.Latitude != 37.3362 || got.Longitude != -121.8906 {
 		t.Fatalf("automatic network metadata = %#v, err=%v", got, err)
 	}
 	report.PublicIP = &model.PublicIP{IPv4: "203.0.113.20", IPv6: "2001:db8::10"}
@@ -122,12 +124,12 @@ func TestNodeIPAndCountryOverridesAndLookupClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = st.GetNode(ctx, node.ID)
-	if err != nil || got.Country != "" || got.CountryCode != "" {
-		t.Fatalf("country was not cleared after IP change = %#v, err=%v", got, err)
+	if err != nil || got.Country != "" || got.CountryCode != "" || got.Region != "" || got.RegionCode != "" || got.City != "" || got.Latitude != 0 || got.Longitude != 0 {
+		t.Fatalf("geo location was not cleared after IP change = %#v, err=%v", got, err)
 	}
-	claimed, err = st.ClaimCountryLookup(ctx, node.ID, "203.0.113.20")
+	claimed, err = st.ClaimGeoLookup(ctx, node.ID, "203.0.113.20")
 	if err != nil || !claimed {
-		t.Fatalf("changed-IP country lookup claim = %v, err=%v", claimed, err)
+		t.Fatalf("changed-IP geo lookup claim = %v, err=%v", claimed, err)
 	}
 	if _, err := st.UpdateNodeMetadataWithOverrides(ctx, node.ID, node.Name, "", nil, "192.0.2.10", "JP"); err != nil {
 		t.Fatal(err)
@@ -171,11 +173,11 @@ func TestCountryDataMigrationQueuesAutomaticRebuildFromCurrentIP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.db.ExecContext(ctx, `
-		UPDATE nodes SET country = ?, country_code = ?, country_lookup_ip = ?, country_override = ?
-		WHERE id = ?`, "旧国家名", "TW", "8.8.8.8", "台湾", nodeID); err != nil {
+		UPDATE nodes SET country = ?, country_code = ?, region = ?, region_code = ?, city = ?, latitude = ?, longitude = ?, country_lookup_ip = ?, country_override = ?
+		WHERE id = ?`, "旧国家名", "TW", "旧地区", "BJ", "旧城市", 39.9, 116.4, "8.8.8.8", "台湾", nodeID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, countryDataMigrationKey); err != nil {
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, geoDataMigrationKey); err != nil {
 		t.Fatal(err)
 	}
 
@@ -196,7 +198,7 @@ func TestCountryDataMigrationQueuesAutomaticRebuildFromCurrentIP(t *testing.T) {
 	if lookupIP != "" {
 		t.Fatalf("country lookup IP was not reset: %q", lookupIP)
 	}
-	claimed, err := st.ClaimCountryLookup(ctx, nodeID, "8.8.8.8")
+	claimed, err := st.ClaimGeoLookup(ctx, nodeID, "8.8.8.8")
 	if err != nil || !claimed {
 		t.Fatalf("current IP was not queued after migration: claimed=%v err=%v", claimed, err)
 	}
@@ -210,7 +212,7 @@ func TestMetricBucketsAggregateAndSelectResolution(t *testing.T) {
 	}
 	defer st.Close()
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Minute)
 	insertMetricBucketTestSample(t, st, "node_metrics", now, 1, model.MetricsSnapshot{
 		CPUPercent:       10,
 		Load1:            1,

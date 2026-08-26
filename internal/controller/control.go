@@ -30,6 +30,7 @@ const (
 	maxNodeMetadataBytes             = 256
 	maxNodeUpdateErrorBytes          = 2048
 	maxTelemetryNetworks             = 256
+	maxTelemetryIntervalMillis int64 = 60 * 1000
 	maxTelemetryRate                 = uint64(1) << 62
 )
 
@@ -265,6 +266,9 @@ func validateLiveTelemetry(expectedID string, telemetry *model.LiveTelemetry) er
 	}
 	if telemetry.Sequence == 0 {
 		return errors.New("telemetry sequence is required")
+	}
+	if telemetry.LiveIntervalMillis != 0 && (telemetry.LiveIntervalMillis < 1000 || telemetry.LiveIntervalMillis > maxTelemetryIntervalMillis) {
+		return errors.New("telemetry interval is invalid")
 	}
 	now := time.Now().UnixMilli()
 	if telemetry.ObservedAtUnixMilli < now-5*60*1000 || telemetry.ObservedAtUnixMilli > now+5*60*1000 {

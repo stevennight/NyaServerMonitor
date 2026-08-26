@@ -165,6 +165,7 @@ func controlTelemetry(ctx context.Context, conn *websocket.Conn, cfg Config, wri
 			telemetry.NodeID = cfg.NodeID
 			telemetry.Sequence = sequence
 			telemetry.ObservedAtUnixMilli = time.Now().UnixMilli()
+			telemetry.LiveIntervalMillis = int64(interval / time.Millisecond)
 			telemetry.AgentVersion = sharedversion.Version
 			telemetry.System = nodeSystem()
 			telemetry.MetricsAvailable = true

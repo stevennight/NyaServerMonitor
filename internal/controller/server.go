@@ -140,8 +140,8 @@ func Run(ctx context.Context, args []string) error {
 	}
 	defer st.Close()
 	s := NewServer(cfg, st)
-	if err := s.queueAllNodeCountryLookups(ctx); err != nil {
-		s.log.Warn("queue country lookups on startup failed", "error", err)
+	if err := s.queueAllNodeGeoLookups(ctx); err != nil {
+		s.log.Warn("queue geo lookups on startup failed", "error", err)
 	}
 	go s.maintenanceLoop(ctx)
 	httpServer := &http.Server{
@@ -686,6 +686,7 @@ func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.Publi
 			continue
 		}
 		model.NormalizeNodeCountry(&node)
+		model.NormalizeNodeGeo(&node)
 		countryCode := node.CountryCode
 		if override := model.CountryCodeFromValue(node.CountryOverride); override != "" {
 			countryCode = override
@@ -700,6 +701,11 @@ func buildPublicDashboard(nodes []model.Node, generatedAtUnix int64) model.Publi
 			Arch:          node.System.Arch,
 			Country:       model.CountryName(countryCode),
 			CountryCode:   countryCode,
+			Region:        node.Region,
+			RegionCode:    node.RegionCode,
+			City:          node.City,
+			Latitude:      node.Latitude,
+			Longitude:     node.Longitude,
 			UptimeSeconds: node.Metrics.UptimeSeconds,
 			Load1:         node.Metrics.Load1,
 			CPUPercent:    coarsePercent(node.Metrics.CPUPercent),
@@ -1203,14 +1209,14 @@ func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request
 	})
 	shouldLookupCountry := current.IPOverride != node.IPOverride
 	if current.CountryOverride != "" && node.CountryOverride == "" && node.Country == "" {
-		if err := s.store.ResetCountryLookup(r.Context(), node.ID); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
-			s.log.Warn("reset node country lookup failed", "node_id", node.ID, "error", err)
+		if err := s.store.ResetGeoLookup(r.Context(), node.ID); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
+			s.log.Warn("reset node geo lookup failed", "node_id", node.ID, "error", err)
 		}
 		shouldLookupCountry = true
 	}
 	if shouldLookupCountry {
-		if err := s.queueNodeCountryLookup(r.Context(), node.ID, displayNodeIP(node)); err != nil {
-			s.log.Warn("queue node country lookup after IP metadata change failed", "node_id", node.ID, "error", err)
+		if err := s.queueNodeGeoLookup(r.Context(), node.ID, displayNodeIP(node)); err != nil {
+			s.log.Warn("queue node geo lookup after IP metadata change failed", "node_id", node.ID, "error", err)
 		}
 	}
 	writeJSON(w, http.StatusOK, node)
@@ -1417,12 +1423,12 @@ func (s *Server) handleAgentReport(w http.ResponseWriter, r *http.Request) {
 	}
 	lookupIP := ""
 	if node, err := s.store.GetNode(r.Context(), report.NodeID); err != nil {
-		s.log.Warn("load node IP for country lookup failed", "node_id", report.NodeID, "error", err)
+		s.log.Warn("load node IP for geo lookup failed", "node_id", report.NodeID, "error", err)
 	} else {
 		lookupIP = displayNodeIP(node)
 	}
-	if err := s.queueNodeCountryLookup(r.Context(), report.NodeID, lookupIP); err != nil {
-		s.log.Warn("queue node country lookup failed", "node_id", report.NodeID, "error", err)
+	if err := s.queueNodeGeoLookup(r.Context(), report.NodeID, lookupIP); err != nil {
+		s.log.Warn("queue node geo lookup failed", "node_id", report.NodeID, "error", err)
 	}
 	go func(nodeID string) {
 		if err := s.alerts.evaluateNode(context.Background(), nodeID); err != nil {
@@ -1443,7 +1449,7 @@ func displayNodeIP(node model.Node) string {
 	return node.PublicIPv6
 }
 
-func (s *Server) queueAllNodeCountryLookups(ctx context.Context) error {
+func (s *Server) queueAllNodeGeoLookups(ctx context.Context) error {
 	if s.geoIP == nil {
 		return nil
 	}
@@ -1453,32 +1459,32 @@ func (s *Server) queueAllNodeCountryLookups(ctx context.Context) error {
 	}
 	for _, node := range nodes {
 		if ip := displayNodeIP(node); ip != "" {
-			if err := s.queueNodeCountryLookup(ctx, node.ID, ip); err != nil {
-				s.log.Warn("queue startup country lookup failed", "node_id", node.ID, "error", err)
+			if err := s.queueNodeGeoLookup(ctx, node.ID, ip); err != nil {
+				s.log.Warn("queue startup geo lookup failed", "node_id", node.ID, "error", err)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *Server) queueNodeCountryLookup(ctx context.Context, nodeID, ip string) error {
+func (s *Server) queueNodeGeoLookup(ctx context.Context, nodeID, ip string) error {
 	if s.geoIP == nil || strings.TrimSpace(ip) == "" {
 		return nil
 	}
 	if !eligibleGeoIP(net.ParseIP(strings.Trim(ip, "[]"))) {
 		return nil
 	}
-	claimed, err := s.store.ClaimCountryLookup(ctx, nodeID, ip)
+	claimed, err := s.store.ClaimGeoLookup(ctx, nodeID, ip)
 	if err != nil || !claimed {
 		return err
 	}
 	go func() {
-		country, countryCode, err := s.geoIP.lookup(context.Background(), ip)
+		location, err := s.geoIP.lookup(context.Background(), ip)
 		if err != nil {
-			s.log.Warn("node country lookup failed", "node_id", nodeID, "ip", ip, "error", err)
+			s.log.Warn("node geo lookup failed", "node_id", nodeID, "ip", ip, "error", err)
 			return
 		}
-		if err := s.store.SaveNodeCountry(context.Background(), nodeID, ip, country, countryCode); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
+		if err := s.store.SaveNodeGeoLocation(context.Background(), nodeID, ip, location); err != nil && !errors.Is(err, store.ErrNodeNotFound) {
 			s.log.Warn("save node country failed", "node_id", nodeID, "ip", ip, "error", err)
 		}
 	}()
