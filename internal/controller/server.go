@@ -213,6 +213,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /downloads/nyasm-node/signature", s.handleDownloadNodeBinarySignature)
 	s.mux.HandleFunc("GET /api/node/ws", s.withNode(s.handleNodeWS))
 	s.mux.HandleFunc("GET /assets/flags/{code}", s.handleFlagAsset)
+	s.mux.HandleFunc("GET /assets/world-map.svg", s.handleWorldMapAsset)
 	// Reports remain a signed, durable data endpoint. The node WebSocket carries
 	// heartbeats, live telemetry, and the fixed signed update message.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)
@@ -1504,6 +1505,17 @@ func (s *Server) handleFlagAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := webFiles.ReadFile("webdist/assets/flags/" + name + ".svg")
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleWorldMapAsset(w http.ResponseWriter, r *http.Request) {
+	data, err := webFiles.ReadFile("webdist/assets/world-map.svg")
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return

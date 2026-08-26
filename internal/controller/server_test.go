@@ -268,6 +268,28 @@ func TestBundledFlagAsset(t *testing.T) {
 	}
 }
 
+func TestBundledWorldMapAsset(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/world-map.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/assets/world-map.svg", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("world map asset status: %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "image/svg+xml; charset=utf-8" {
+		t.Fatalf("unexpected world map content type: %q", response.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(response.Body.String(), "<svg") || !strings.Contains(response.Body.String(), "world-map-land") {
+		t.Fatalf("unexpected world map asset body")
+	}
+}
+
 func TestPublicNodeSortModes(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	nodes := []model.Node{
