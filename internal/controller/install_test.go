@@ -26,6 +26,8 @@ func TestInstallScriptInstallsAndRestartsNodeService(t *testing.T) {
 		"ProtectHome=true",
 		"PrivateTmp=true",
 		"ReadWritePaths=/var/lib/nyasm",
+		"pkeyutl_help=\"$(openssl pkeyutl -help 2>&1 || true)\"",
+		"*-rawin*)",
 		"systemctl daemon-reload\nsystemctl enable nyasm-node\nsystemctl restart nyasm-node",
 	} {
 		if !strings.Contains(script, required) {

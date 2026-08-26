@@ -134,7 +134,19 @@ if [ -n "$update_signing_key" ]; then
 	while [ $(( ${#key_base64} % 4 )) -ne 0 ]; do key_base64="${key_base64}="; done
 	printf '%s' "$key_base64" | base64 -d > "$public_key_path"
 	curl -fsS $curl_progress --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$signature_url" -o "$tmpdir/nyasm-node.sig"
-	if ! openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node" -sigfile "$tmpdir/nyasm-node.sig" >/dev/null 2>&1; then
+	verify_node_signature() {
+		# OpenSSL 1.1.1 (for example Debian 11) treats Ed25519 input as raw by default.
+		pkeyutl_help="$(openssl pkeyutl -help 2>&1 || true)"
+		case "$pkeyutl_help" in
+			*-rawin*)
+				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node" -sigfile "$tmpdir/nyasm-node.sig" >/dev/null 2>&1
+				;;
+			*)
+				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -in "$tmpdir/nyasm-node" -sigfile "$tmpdir/nyasm-node.sig" >/dev/null 2>&1
+				;;
+		esac
+	}
+	if ! verify_node_signature; then
 		echo "node binary signature verification failed" >&2
 		exit 1
 	fi
