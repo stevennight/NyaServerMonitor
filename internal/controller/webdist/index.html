@@ -4,6 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NyaServerMonitor</title>
+  <script>
+    (() => {
+      try {
+        const value = window.localStorage.getItem('nyasm_theme');
+        if (value === 'dark' || value === 'light') {
+          document.documentElement.dataset.theme = value;
+          document.documentElement.style.colorScheme = value;
+        }
+      } catch (_) {}
+    })();
+  </script>
   <style>
     .field select{border:1px solid var(--line);border-radius:6px;background:#0d1519;color:var(--text);padding:10px 11px;outline:0}.country-picker select{width:100%}.field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(109,181,223,.12)}
     :root{color-scheme:dark;--bg:#0c1115;--panel:#141d23;--panel-2:#18252b;--line:#2b3940;--text:#e8f0ec;--muted:#91a19d;--green:#49d18d;--yellow:#e7b94e;--red:#ef7070;--blue:#6db5df;--shadow:0 16px 45px rgba(0,0,0,.2)}
@@ -129,8 +140,153 @@
     .geo-map-legend-dot.map-legend-attention{background:var(--yellow);box-shadow:0 0 0 3px rgba(245,194,76,.12)}
     .geo-map-legend-dot.map-legend-offline{background:var(--red);box-shadow:0 0 0 3px rgba(235,102,102,.12)}
     @keyframes map-pulse-rich{0%{r:9px;opacity:.82}70%{r:26px;opacity:0}100%{r:26px;opacity:0}}
-    @media(max-width:700px){.map-surface{min-height:220px}.world-map-svg{height:100%;min-height:0}.map-empty{min-height:0}}
-  </style>
+     @media(max-width:700px){.map-surface{min-height:220px}.world-map-svg{height:100%;min-height:0}.map-empty{min-height:0}}
+   </style>
+   <style>
+     :root{
+       --theme-side-bg:#10181d;
+       --theme-header-bg:rgba(12,17,21,.92);
+       --theme-input-bg:#0d1519;
+       --theme-track:#27363d;
+       --theme-mono:#c6d7d0;
+       --theme-row-line:rgba(43,57,64,.65);
+       --theme-hover-border:#46606a;
+       --theme-primary-text:#082018;
+       --theme-mark-text:#092018;
+       --theme-tag:#b6c8c1;
+       --theme-badge-bg:#233039;
+       --theme-notice-border:#65562e;
+       --theme-notice-bg:rgba(231,185,78,.08);
+       --theme-notice-text:#e8d59b;
+       --theme-token-bg:#0b1114;
+       --theme-modal-backdrop:rgba(0,0,0,.65);
+       --theme-overlay-shadow:rgba(0,0,0,.45);
+       --theme-toast-bg:#20352d;
+       --theme-toast-border:#3f8f68;
+       --theme-toast-text:#c8f4dc;
+       --theme-error-bg:#3b2428;
+       --theme-error-border:#9f4b57;
+       --theme-error-text:#ffd0d0;
+       --theme-auth-accent:rgba(73,209,141,.12);
+       --theme-subtle-surface:rgba(24,37,43,.42);
+       --theme-map-surface:#07151b;
+       --theme-map-border:#263d46;
+       --theme-map-grid:rgba(109,181,223,.06);
+       --theme-map-empty-bg:rgba(7,21,27,.38);
+       --map-ocean:#0b2028;
+       --map-land:#315860;
+       --map-land-muted:#1d3d45;
+       --map-border:#83b2b4;
+       --map-grid:#78aeb3;
+       --map-label:#b2d1d2;
+       --map-land-hover:#4e8586;
+       --map-border-hover:#e6ffff;
+       --map-marker-text:#edfff7;
+       --map-marker-count-bg:#081719;
+       --theme-switch-bg:#141d23;
+       --theme-switch-active-bg:#18252b;
+     }
+     html[data-theme="light"]{
+       color-scheme:light;
+       --bg:#f4f7f6;
+       --panel:#ffffff;
+       --panel-2:#eef3f2;
+       --line:#d2ddda;
+       --text:#17221f;
+       --muted:#61716d;
+       --green:#1f9d68;
+       --yellow:#a5700c;
+       --red:#c54545;
+       --blue:#287ca7;
+       --shadow:0 12px 30px rgba(27,51,45,.09);
+       --theme-side-bg:#ffffff;
+       --theme-header-bg:rgba(255,255,255,.92);
+       --theme-input-bg:#ffffff;
+       --theme-track:#dbe6e2;
+       --theme-mono:#31534a;
+       --theme-row-line:rgba(43,64,59,.18);
+       --theme-hover-border:#7aa69f;
+       --theme-primary-text:#f5fffa;
+       --theme-mark-text:#f5fffa;
+       --theme-tag:#41645c;
+       --theme-badge-bg:#edf3f1;
+       --theme-notice-border:#a98a32;
+       --theme-notice-bg:rgba(169,138,50,.11);
+       --theme-notice-text:#735d17;
+       --theme-token-bg:#f5f8f7;
+       --theme-modal-backdrop:rgba(21,37,31,.34);
+       --theme-overlay-shadow:rgba(35,60,51,.2);
+       --theme-toast-bg:#e6f4ed;
+       --theme-toast-border:#8bc5a9;
+       --theme-toast-text:#185e3e;
+       --theme-error-bg:#fcebed;
+       --theme-error-border:#d98c96;
+       --theme-error-text:#8e2f3c;
+       --theme-auth-accent:rgba(31,157,104,.1);
+       --theme-subtle-surface:rgba(231,239,236,.8);
+       --theme-map-surface:#eef5f4;
+       --theme-map-border:#b9cfcb;
+       --theme-map-grid:rgba(40,124,167,.08);
+       --theme-map-empty-bg:rgba(255,255,255,.46);
+       --map-ocean:#e8f3f2;
+       --map-land:#b9d1cc;
+       --map-land-muted:#d0dfdc;
+       --map-border:#6d9792;
+       --map-grid:#7a9a96;
+       --map-label:#547572;
+       --map-land-hover:#8bb7b0;
+       --map-border-hover:#315f5b;
+       --map-marker-text:#f5fffb;
+       --map-marker-count-bg:#18554a;
+       --theme-switch-bg:#ffffff;
+       --theme-switch-active-bg:#eef3f2;
+     }
+     .field select,.field input,.search-field input,.filter-select select,.country-combobox-trigger,.country-options-panel>input{background:var(--theme-input-bg)}
+     .side,.public-top,.private-top{background:var(--theme-side-bg)}
+     .top{background:var(--theme-header-bg)}
+     .mark{color:var(--theme-mark-text)}
+     .btn:hover{border-color:var(--theme-hover-border)}
+     .btn.primary{color:var(--theme-primary-text)}
+     .btn.danger{color:var(--theme-error-text);border-color:var(--theme-error-border)}
+     .table td,.event,.node-card-info,.node-card-meta,.node-card-foot,.public-metric-grid,.public-node-foot{border-color:var(--theme-row-line)}
+     .badge{background:var(--theme-badge-bg)}
+     .mono,.token{color:var(--theme-mono)}
+     .bar,.resource-meter,.public-meter{background:var(--theme-track)}
+     .node-tag,.public-node-tag{color:var(--theme-tag)}
+     .notice{border-color:var(--theme-notice-border);background:var(--theme-notice-bg);color:var(--theme-notice-text)}
+     .token{background:var(--theme-token-bg)}
+     .modal-backdrop{background:var(--theme-modal-backdrop)}
+     .modal{box-shadow:0 25px 80px var(--theme-overlay-shadow)}
+     .toast{background:var(--theme-toast-bg);border-color:var(--theme-toast-border);color:var(--theme-toast-text)}
+     .toast.error{background:var(--theme-error-bg);border-color:var(--theme-error-border);color:var(--theme-error-text)}
+     .auth-page{background:radial-gradient(circle at 80% 15%,var(--theme-auth-accent),transparent 30%),var(--bg)}
+     .alert-rule,.history-card{background:var(--theme-subtle-surface)}
+     .country-options-panel{background:var(--theme-side-bg);border-color:var(--theme-hover-border);box-shadow:0 18px 45px var(--theme-overlay-shadow)}
+     .country-combobox-trigger:hover,.country-combobox-trigger[aria-expanded="true"]{border-color:var(--theme-hover-border)}
+     .public-node-card:hover,.public-node-card:focus-visible{border-color:var(--theme-hover-border)}
+     .country-flag-image{border-color:var(--theme-row-line);box-shadow:0 1px 2px var(--theme-overlay-shadow)}
+     .theme-switch{display:inline-flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--line);border-radius:6px;background:var(--theme-switch-bg);white-space:nowrap}
+     .theme-switch-label{padding:0 5px;color:var(--muted);font-size:11px}
+     .theme-switch button{border:0;border-radius:4px;background:transparent;color:var(--muted);padding:4px 7px;font-size:11px;line-height:1.25}
+     .theme-switch button:hover,.theme-switch button[aria-pressed="true"]{background:var(--theme-switch-active-bg);color:var(--text)}
+     .theme-switch button[aria-pressed="true"]{box-shadow:inset 0 -2px var(--green)}
+     .auth-theme-switch{display:flex;justify-content:flex-end;margin:0 0 18px}
+     .world-map-svg .world-map-ocean{fill:var(--map-ocean)!important}
+     .world-map-svg .world-map-graticule,.world-map-svg .world-map-grid{fill:none;stroke:var(--map-grid)!important;stroke-opacity:.18!important;pointer-events:none}
+     .world-map-svg .world-map-land,.world-map-svg .world-map-land-muted{fill:var(--map-land)!important;stroke:var(--map-border)!important;stroke-opacity:.72!important;pointer-events:visiblePainted;cursor:crosshair;transition:fill .14s ease,stroke .14s ease,filter .14s ease}
+     .world-map-svg .world-map-land-muted{fill:var(--map-land-muted)!important;stroke-opacity:.56!important}
+     .world-map-svg .world-map-land:hover,.world-map-svg .world-map-land-muted:hover{fill:var(--map-land-hover)!important;stroke:var(--map-border-hover)!important;stroke-opacity:1!important;filter:brightness(1.08) drop-shadow(0 0 3px var(--map-border-hover))}
+     .world-map-svg .world-map-labels{fill:var(--map-label)!important;pointer-events:none}
+     .world-map-svg .world-map-ocean,.world-map-svg .world-map-labels{pointer-events:none}
+     .map-surface{background:var(--theme-map-surface);background-image:linear-gradient(135deg,var(--theme-map-grid),transparent 42%),linear-gradient(315deg,rgba(73,209,141,.04),transparent 45%);border-color:var(--theme-map-border)}
+     .map-empty{background:var(--theme-map-empty-bg)}
+     .map-marker .marker-core{stroke:var(--map-marker-text)}
+     .map-marker .marker-count{fill:var(--map-marker-count-bg)}
+     .map-marker text{fill:var(--map-marker-text)}
+     .map-marker:hover .marker-core,.map-marker:focus .marker-core{fill:var(--panel);stroke:var(--blue)}
+     .map-popover{background:var(--panel);border-color:var(--theme-hover-border);box-shadow:0 14px 35px var(--theme-overlay-shadow)}
+     @media(max-width:700px){.theme-switch-label{display:none}.private-top .top-actions{flex-wrap:wrap;justify-content:flex-end}.theme-switch button{padding-left:6px;padding-right:6px}}
+   </style>
 </head>
 <body>
   <div id="root"></div>
@@ -246,7 +402,7 @@
     const mapGroups = nodes => { const groups=new Map(); let unlocated=0; for(const node of nodes||[]){const code=effectiveCountryCode(node);if(!code||!countryMapPoints[code]){unlocated++;continue;}let group=groups.get(code);if(!group){group={code,nodes:[],online:0,problem:0,point:countryMapPoints[code]};groups.set(code,group);}group.nodes.push(node);if(node.status==='online')group.online++;if(node.status!=='online'||publicNodeHasDegraded(node)||nodeHasDegraded(node))group.problem++;}return {groups:[...groups.values()].sort((left,right)=>left.code.localeCompare(right.code)),unlocated}; };
     const mapMarkerMarkup = group => { const x=Math.min(970,Math.max(30,Number(group.point[0]))); const y=Math.min(440,Math.max(30,Number(group.point[1]))); const count=group.nodes.length; const state=group.online===0?'offline':group.problem?'attention':'healthy'; const label=`${countryName(group.code)} ${count} 个节点，在线 ${group.online} 个`; return `<g class="map-marker" data-map-code="${esc(group.code)}" data-map-state="${state}" transform="translate(${x} ${y})" role="button" tabindex="0" aria-label="${esc(label)}"><circle class="marker-ring" cx="0" cy="0" r="9"></circle><circle class="marker-core" cx="0" cy="0" r="7"></circle><circle class="marker-count" cx="15" cy="-15" r="11"></circle><text x="15" y="-15">${count>99?'99+':count}</text></g>`; };
     const mapStatusLegendMarkup = '<span class="geo-map-legend-item"><span class="geo-map-legend-dot"></span>全部在线</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-attention"></span>部分异常</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-offline"></span>暂无在线节点</span>';
-    const mapSurfaceMarkup = nodes => { const result=mapGroups(nodes); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true">`; if(!result.groups.length)return `<div class="map-surface" data-map-surface>${image}<div class="map-empty">${result.unlocated?'暂时没有可定位的国家/地区':'暂无节点地区数据'}</div></div>`; const markers=result.groups.map(mapMarkerMarkup).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(countryName(group.code))} ${group.nodes.length}</span>`).join(''); return `<div class="map-surface" data-map-surface>${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点国家和地区分布"><title>节点国家和地区分布</title><g>${markers}</g></svg><div class="map-popover" data-map-popover hidden></div></div><div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`; };
+     const mapSurfaceMarkup = nodes => { const result=mapGroups(nodes); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true">`; const markers=result.groups.map(mapMarkerMarkup).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(countryName(group.code))} ${group.nodes.length}</span>`).join(''); const empty=result.groups.length?'':`<div class="map-empty">${result.unlocated?'暂时没有可定位的国家/地区':'暂无节点地区数据'}</div>`; const legendMarkup=result.groups.length?`<div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`:''; return `<div class="map-surface" data-map-surface>${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点国家和地区分布"><title>节点国家和地区分布</title><g data-map-markers>${markers}</g></svg>${empty}<div class="map-popover" data-map-popover hidden></div></div>${legendMarkup}`; };
     const mapPopoverMarkup = group => { const online=group.nodes.filter(node=>node.status==='online').length; const list=group.nodes.slice(0,8).map(node=>`<li><span>${esc(node.name||'未命名节点')}</span><span>${esc(({online:'在线',offline:'离线',pending:'待上报',revoked:'已撤销'}[node.status]||'检查异常'))}</span></li>`).join(''); return `<div class="map-popover-head"><strong>${countryMarkup(group.nodes[0])} · ${group.nodes.length} 个节点</strong><button type="button" class="map-popover-close" data-map-close aria-label="关闭">×</button></div><div class="map-popover-meta">在线 ${online} · 其他 ${Math.max(0,group.nodes.length-online)}</div><ul class="map-popover-list">${list}${group.nodes.length>8?`<li><span>还有 ${group.nodes.length-8} 个节点</span><span>...</span></li>`:''}</ul>`; };
     const homeMapNodes = publicPage => (publicPage?state.publicDashboard?.nodes:state.dashboard?.nodes)||[];
     const mapPanelMarkup = publicPage => { const dashboard=publicPage?state.publicDashboard:state.dashboard; const nodes=homeMapNodes(publicPage); const groups=mapGroups(nodes).groups; const total=nodes.length; const visible=state.mapVisible; return `<section class="geo-map-panel${visible?'':' map-collapsed'}" data-map-panel data-map-public="${publicPage?'true':'false'}"><div class="geo-map-head"><div><div class="public-kicker">NODE GEOGRAPHY</div><h3>节点地区分布</h3><p>按国家/地区聚合节点位置，点击标记查看节点数量与状态。</p></div><div class="geo-map-actions"><span class="map-summary" data-map-summary>${groups.length} 个地区 · ${total} 个节点</span><label class="map-toggle"><input type="checkbox" data-map-toggle${visible?' checked':''}> 显示地图</label><button type="button" class="btn small map-reopen" data-map-reopen>显示地图</button></div></div><div class="geo-map-body" data-map-content>${mapSurfaceMarkup(nodes)}</div></section>`; };
@@ -441,6 +597,108 @@
   </script>
   <script>
     (() => {
+      const themeStorageKey = 'nyasm_theme';
+      const themeDefinitions = Object.freeze({ dark: '黑色', light: '白色' });
+      let activeTheme = 'dark';
+      const loadTheme = () => {
+        try {
+          const value = window.localStorage.getItem(themeStorageKey);
+          return Object.prototype.hasOwnProperty.call(themeDefinitions, value) ? value : 'dark';
+        } catch (_) {
+          return 'dark';
+        }
+      };
+      const applyTheme = (value, persist = true) => {
+        const next = Object.prototype.hasOwnProperty.call(themeDefinitions, value) ? value : 'dark';
+        activeTheme = next;
+        document.documentElement.dataset.theme = next;
+        document.documentElement.style.colorScheme = next;
+        if (persist) {
+          try { window.localStorage.setItem(themeStorageKey, next); } catch (_) {}
+        }
+        document.querySelectorAll('[data-theme-value]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeValue === next)));
+      };
+      const themeControlMarkup = () => `<div class="theme-switch" data-theme-control role="group" aria-label="主题"><span class="theme-switch-label">主题</span><button type="button" data-theme-value="dark" aria-pressed="${activeTheme === 'dark'}">${themeDefinitions.dark}</button><button type="button" data-theme-value="light" aria-pressed="${activeTheme === 'light'}">${themeDefinitions.light}</button></div>`;
+      const bindThemeControl = control => {
+        if (!control || control.dataset.themeBound === 'true') return;
+        control.dataset.themeBound = 'true';
+        control.querySelectorAll('[data-theme-value]').forEach(button => button.onclick = () => applyTheme(button.dataset.themeValue));
+      };
+      const ensureThemeControls = () => {
+        document.querySelectorAll('.public-top,.private-top,.top').forEach(host => {
+          let target = host.querySelector('.top-actions');
+          if (!target && host.classList.contains('public-top')) {
+            target = document.createElement('div');
+            target.className = 'top-actions';
+            while (host.children.length > 1) target.append(host.lastElementChild);
+            host.append(target);
+          }
+          if (target && !target.querySelector('[data-theme-control]')) target.insertAdjacentHTML('beforeend', themeControlMarkup());
+        });
+        document.querySelectorAll('.auth-box').forEach(box => {
+          if (box.querySelector('[data-theme-control]')) return;
+          const brand = box.querySelector('.auth-brand');
+          if (brand) brand.insertAdjacentHTML('afterend', `<div class="auth-theme-switch">${themeControlMarkup()}</div>`);
+          else box.insertAdjacentHTML('afterbegin', `<div class="auth-theme-switch">${themeControlMarkup()}</div>`);
+        });
+        document.querySelectorAll('[data-theme-control]').forEach(bindThemeControl);
+      };
+      window.addEventListener('storage', event => { if (event.key === themeStorageKey) applyTheme(event.newValue, false); });
+      applyTheme(loadTheme(), false);
+
+      const svgNamespace = 'http://www.w3.org/2000/svg';
+      const worldMapAssetPath = '/assets/world-map.svg';
+      let worldMapSourcePromise = null;
+      const loadWorldMapSource = () => {
+        if (!worldMapSourcePromise) {
+          worldMapSourcePromise = fetch(worldMapAssetPath, { credentials: 'same-origin' }).then(response => {
+            if (!response.ok) throw new Error('world map unavailable');
+            return response.text();
+          });
+        }
+        return worldMapSourcePromise;
+      };
+      const labelMapCountries = staticGroup => {
+        staticGroup.querySelectorAll('.world-map-land[data-iso],.world-map-land-muted[data-iso]').forEach(path => {
+          const code = String(path.getAttribute('data-iso') || '').trim().toUpperCase();
+          if (!/^[A-Z]{2}$/.test(code)) return;
+          const name = window.nyasmCountryName?.(code) || code;
+          path.dataset.mapCountry = code;
+          path.setAttribute('aria-label', '国家/地区 ' + name);
+          if (!path.querySelector('title')) {
+            const title = document.createElementNS(svgNamespace, 'title');
+            title.textContent = name;
+            path.append(title);
+          }
+        });
+      };
+      const hydrateMap = async surface => {
+        const svg = surface?.querySelector('.world-map-svg');
+        if (!svg || svg.dataset.mapHydrated || svg.dataset.mapHydrating === 'true') return;
+        svg.dataset.mapHydrating = 'true';
+        try {
+          const sourceText = await loadWorldMapSource();
+          if (!surface.isConnected || !svg.isConnected) return;
+          const documentSource = new DOMParser().parseFromString(sourceText, 'image/svg+xml');
+          const source = documentSource.documentElement;
+          if (!source || source.nodeName.toLowerCase() !== 'svg' || documentSource.querySelector('parsererror')) throw new Error('invalid world map');
+          const staticGroup = document.createElementNS(svgNamespace, 'g');
+          staticGroup.dataset.mapStatic = 'true';
+          [...source.children].forEach(child => staticGroup.append(document.importNode(child, true)));
+          labelMapCountries(staticGroup);
+          const markers = svg.querySelector('[data-map-markers]');
+          if (markers) svg.insertBefore(staticGroup, markers);
+          else svg.append(staticGroup);
+          surface.querySelector('.world-map-base')?.remove();
+          svg.dataset.mapHydrated = 'true';
+        } catch (_) {
+          svg.dataset.mapHydrated = 'fallback';
+        } finally {
+          delete svg.dataset.mapHydrating;
+        }
+      };
+      const hydrateMaps = () => document.querySelectorAll('[data-map-surface]').forEach(surface => { void hydrateMap(surface); });
+
       const nodeID = () => {
         for (const item of document.querySelectorAll('.detail-meta > div')) {
           if (item.querySelector('.meta-label')?.textContent?.trim() === '节点 ID') {
@@ -942,6 +1200,8 @@
             text.textContent = text.textContent.replace('不会向子节点发送 shell、脚本、配置或更新指令', '不会向子节点发送 shell、脚本或配置；更新只能使用签名发布物');
           }
         }
+        ensureThemeControls();
+        hydrateMaps();
         bindPublicNodeCards();
         bindPrivateNodeCards();
         syncHomeLayout();
