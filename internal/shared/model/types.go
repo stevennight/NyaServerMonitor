@@ -204,6 +204,8 @@ type Dashboard struct {
 	RevokedNodes    int          `json:"revoked_nodes"`
 	DegradedChecks  int          `json:"degraded_checks"`
 	ActiveAlerts    int          `json:"active_alerts"`
+	SiteName        string       `json:"site_name"`
+	MapEnabled      bool         `json:"map_enabled"`
 	Nodes           []Node       `json:"nodes"`
 	RecentEvents    []AuditEvent `json:"recent_events"`
 	RecentAlerts    []AlertEvent `json:"recent_alerts"`
@@ -279,6 +281,8 @@ type PublicDashboard struct {
 	OfflineNodes    int          `json:"offline_nodes"`
 	PendingNodes    int          `json:"pending_nodes"`
 	DegradedNodes   int          `json:"degraded_nodes"`
+	SiteName        string       `json:"site_name"`
+	MapEnabled      bool         `json:"map_enabled"`
 	Nodes           []PublicNode `json:"nodes"`
 	GeneratedAtUnix int64        `json:"generated_at_unix"`
 }

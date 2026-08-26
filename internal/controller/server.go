@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"nyaservermonitor/internal/controller/auth"
 	"nyaservermonitor/internal/controller/nodehub"
@@ -36,7 +37,15 @@ import (
 const (
 	sessionCookieName = "nyasm_session"
 	reportPath        = "/api/agent/v1/report"
+	settingSiteName   = "site_name"
+	settingMapEnabled = "map_enabled"
+	defaultSiteName   = "NyaServerMonitor"
 )
+
+type siteSettings struct {
+	SiteName   string `json:"site_name"`
+	MapEnabled bool   `json:"map_enabled"`
+}
 
 //go:embed webdist/*
 var webFiles embed.FS
@@ -171,6 +180,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/settings/totp/setup", s.withAuth(s.handleTOTPSetup))
 	s.mux.HandleFunc("POST /api/settings/totp/enable", s.withAuth(s.handleTOTPEnable))
 	s.mux.HandleFunc("POST /api/settings/totp/disable", s.withAuth(s.handleTOTPDisable))
+	s.mux.HandleFunc("GET /api/settings/site", s.withAuth(s.handleSiteSettings))
+	s.mux.HandleFunc("PUT /api/settings/site", s.withAuth(s.handleSiteSettings))
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/public/nodes/{id}/metrics", s.handlePublicNodeMetrics)
 	s.mux.HandleFunc("GET /api/public/telemetry/stream", s.handlePublicTelemetryStream)
@@ -425,6 +436,11 @@ func sameOrigin(r *http.Request) bool {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session auth.Session) {
 	_ = s.store.MarkOffline(r.Context(), time.Now().UTC().Add(-s.cfg.OfflineAfter))
+	settings, err := s.getSiteSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load site settings")
+		return
+	}
 	nodes, err := s.store.ListNodes(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to load nodes")
@@ -445,7 +461,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session
 		writeError(w, http.StatusInternalServerError, "unable to load alert state")
 		return
 	}
-	dashboard := model.Dashboard{Nodes: nodes, RecentEvents: events, RecentAlerts: alertEvents, ActiveAlerts: activeAlerts, GeneratedAtUnix: time.Now().Unix()}
+	dashboard := model.Dashboard{Nodes: nodes, RecentEvents: events, RecentAlerts: alertEvents, ActiveAlerts: activeAlerts, GeneratedAtUnix: time.Now().Unix(), SiteName: settings.SiteName, MapEnabled: settings.MapEnabled}
 	for _, node := range nodes {
 		switch node.Status {
 		case model.NodeOnline:
@@ -465,11 +481,99 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session
 	writeJSON(w, http.StatusOK, dashboard)
 }
 
+func (s *Server) getSiteSettings(ctx context.Context) (siteSettings, error) {
+	settings := siteSettings{SiteName: defaultSiteName, MapEnabled: true}
+	if value, ok, err := s.store.GetSetting(ctx, settingSiteName); err != nil {
+		return siteSettings{}, err
+	} else if ok && strings.TrimSpace(value) != "" {
+		settings.SiteName = strings.TrimSpace(value)
+	}
+	if value, ok, err := s.store.GetSetting(ctx, settingMapEnabled); err != nil {
+		return siteSettings{}, err
+	} else if ok {
+		if enabled, parseErr := strconv.ParseBool(strings.TrimSpace(value)); parseErr == nil {
+			settings.MapEnabled = enabled
+		}
+	}
+	return settings, nil
+}
+
+func normalizeSiteName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return "", errors.New("site name must be between 1 and 128 bytes")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return "", errors.New("site name contains a control character")
+		}
+	}
+	return value, nil
+}
+
+type siteSettingsRequest struct {
+	SiteName   *string `json:"site_name"`
+	MapEnabled *bool   `json:"map_enabled"`
+}
+
+func (s *Server) handleSiteSettings(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	current, err := s.getSiteSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to load site settings")
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, current)
+		return
+	}
+	var input siteSettingsRequest
+	if err := decodeJSON(w, r, 4096, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.SiteName != nil {
+		current.SiteName, err = normalizeSiteName(*input.SiteName)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if input.MapEnabled != nil {
+		current.MapEnabled = *input.MapEnabled
+	}
+	if err := s.store.SetSetting(r.Context(), settingSiteName, current.SiteName); err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to save site name")
+		return
+	}
+	if err := s.store.SetSetting(r.Context(), settingMapEnabled, strconv.FormatBool(current.MapEnabled)); err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to save map setting")
+		return
+	}
+	s.invalidatePublicDashboard()
+	_ = s.store.AddAudit(r.Context(), session.Username, "site_settings_updated", "site", map[string]any{
+		"site_name":   current.SiteName,
+		"map_enabled": current.MapEnabled,
+	})
+	writeJSON(w, http.StatusOK, current)
+}
+
+func (s *Server) invalidatePublicDashboard() {
+	s.publicMu.Lock()
+	s.publicAt = time.Time{}
+	s.publicBody = nil
+	s.publicMu.Unlock()
+}
+
 const publicDashboardCacheTTL = 5 * time.Second
 
 func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	sortMode := publicNodeSort(r.URL.Query().Get("sort"))
+	settings, err := s.getSiteSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
+		return
+	}
 	s.publicMu.Lock()
 	if len(s.publicBody) > 0 && s.publicSort == sortMode && now.Sub(s.publicAt) < publicDashboardCacheTTL {
 		body := append([]byte(nil), s.publicBody...)
@@ -486,7 +590,10 @@ func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sortPublicNodes(nodes, sortMode)
-	body, err := json.Marshal(buildPublicDashboard(nodes, now.Unix()))
+	dashboard := buildPublicDashboard(nodes, now.Unix())
+	dashboard.SiteName = settings.SiteName
+	dashboard.MapEnabled = settings.MapEnabled
+	body, err := json.Marshal(dashboard)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "public dashboard unavailable")
 		return

@@ -170,6 +170,65 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	}
 }
 
+func TestSiteSettingsAreValidatedAndSharedWithDashboards(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/settings.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+
+	setupRequest := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(`{"username":"admin","password":"correct-horse-battery-staple"}`))
+	setupRequest.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(setupResponse, setupRequest)
+	if setupResponse.Code != http.StatusCreated {
+		t.Fatalf("setup status: %d %s", setupResponse.Code, setupResponse.Body.String())
+	}
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one session cookie, got %d", len(cookies))
+	}
+
+	publicResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/api/public/dashboard", nil))
+	if publicResponse.Code != http.StatusOK || !strings.Contains(publicResponse.Body.String(), `"site_name":"NyaServerMonitor"`) || !strings.Contains(publicResponse.Body.String(), `"map_enabled":true`) {
+		t.Fatalf("default public settings missing: %d %s", publicResponse.Code, publicResponse.Body.String())
+	}
+
+	invalid := httptest.NewRequest(http.MethodPut, "/api/settings/site", strings.NewReader(`{"site_name":"bad\nname","map_enabled":false}`))
+	invalid.Header.Set("Content-Type", "application/json")
+	invalid.AddCookie(cookies[0])
+	invalidResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid settings status: %d %s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+
+	update := httptest.NewRequest(http.MethodPut, "/api/settings/site", strings.NewReader(`{"site_name":"边缘监控","map_enabled":false}`))
+	update.Header.Set("Content-Type", "application/json")
+	update.AddCookie(cookies[0])
+	updateResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(updateResponse, update)
+	if updateResponse.Code != http.StatusOK || !strings.Contains(updateResponse.Body.String(), `"site_name":"边缘监控"`) || !strings.Contains(updateResponse.Body.String(), `"map_enabled":false`) {
+		t.Fatalf("update settings status: %d %s", updateResponse.Code, updateResponse.Body.String())
+	}
+
+	publicResponse = httptest.NewRecorder()
+	s.mux.ServeHTTP(publicResponse, httptest.NewRequest(http.MethodGet, "/api/public/dashboard", nil))
+	if !strings.Contains(publicResponse.Body.String(), `"site_name":"边缘监控"`) || !strings.Contains(publicResponse.Body.String(), `"map_enabled":false`) {
+		t.Fatalf("updated public settings missing: %s", publicResponse.Body.String())
+	}
+	privateRequest := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	privateRequest.AddCookie(cookies[0])
+	privateResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(privateResponse, privateRequest)
+	if privateResponse.Code != http.StatusOK || !strings.Contains(privateResponse.Body.String(), `"site_name":"边缘监控"`) || !strings.Contains(privateResponse.Body.String(), `"map_enabled":false`) {
+		t.Fatalf("updated private settings missing: %d %s", privateResponse.Code, privateResponse.Body.String())
+	}
+}
+
 func TestPublicDiskPercentAggregatesPhysicalDisks(t *testing.T) {
 	disks := []model.DiskMetric{
 		{Device: "vda", UsedBytes: 50, TotalBytes: 100},
@@ -249,6 +308,8 @@ func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 		{http.MethodPost, "/api/settings/totp/setup"},
 		{http.MethodPost, "/api/settings/totp/enable"},
 		{http.MethodPost, "/api/settings/totp/disable"},
+		{http.MethodGet, "/api/settings/site"},
+		{http.MethodPut, "/api/settings/site"},
 		{http.MethodGet, "/api/dashboard"},
 		{http.MethodGet, "/api/audit"},
 		{http.MethodGet, "/api/alerts"},
