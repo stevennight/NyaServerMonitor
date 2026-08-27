@@ -1280,6 +1280,28 @@ func (s *Store) ListNotificationChannelRecords(ctx context.Context) ([]Notificat
 	return channels, rows.Err()
 }
 
+func (s *Store) GetNotificationChannelRecord(ctx context.Context, id string) (NotificationChannelRecord, error) {
+	var record NotificationChannelRecord
+	var enabled int
+	var created, updated string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, type, enabled, target_ciphertext, secret_ciphertext, created_at, updated_at
+		FROM notification_channels WHERE id = ?`, id).Scan(
+		&record.Channel.ID, &record.Channel.Name, &record.Channel.Type, &enabled,
+		&record.TargetCiphertext, &record.SecretCiphertext, &created, &updated,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NotificationChannelRecord{}, ErrNotificationChannelNotFound
+	}
+	if err != nil {
+		return NotificationChannelRecord{}, err
+	}
+	record.Channel.Enabled = enabled == 1
+	record.Channel.CreatedAt = parseTime(created)
+	record.Channel.UpdatedAt = parseTime(updated)
+	return record, nil
+}
+
 func (s *Store) DeleteNotificationChannel(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `DELETE FROM notification_channels WHERE id = ?`, id)
 	if err != nil {

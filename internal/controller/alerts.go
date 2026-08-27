@@ -289,6 +289,23 @@ type notificationChannel struct {
 	secret string
 }
 
+const testNotificationMessage = "NyaServerMonitor 测试消息：通知渠道配置正常。"
+
+func (e *alertEngine) openNotificationChannel(record store.NotificationChannelRecord) (notificationChannel, error) {
+	target, err := e.box.open(record.TargetCiphertext)
+	if err != nil {
+		return notificationChannel{}, errors.New("unable to decrypt notification target")
+	}
+	secret := ""
+	if record.SecretCiphertext != "" {
+		secret, err = e.box.open(record.SecretCiphertext)
+		if err != nil {
+			return notificationChannel{}, errors.New("unable to decrypt notification secret")
+		}
+	}
+	return notificationChannel{NotificationChannel: record.Channel, target: target, secret: secret}, nil
+}
+
 func (e *alertEngine) notifyEvent(ctx context.Context, eventID int64, rule model.AlertRule, node model.Node, kind string, condition alertCondition) {
 	records, err := e.store.ListNotificationChannelRecords(ctx)
 	if err != nil {
@@ -309,13 +326,12 @@ func (e *alertEngine) notifyEvent(ctx context.Context, eventID int64, rule model
 				continue
 			}
 		}
-		target, targetErr := e.box.open(record.TargetCiphertext)
-		secret, secretErr := e.box.open(record.SecretCiphertext)
-		if targetErr != nil || (record.SecretCiphertext != "" && secretErr != nil) {
+		channel, channelErr := e.openNotificationChannel(record)
+		if channelErr != nil {
 			e.log.Warn("decrypt notification channel failed", "channel_id", record.Channel.ID)
 			continue
 		}
-		channels = append(channels, notificationChannel{NotificationChannel: record.Channel, target: target, secret: secret})
+		channels = append(channels, channel)
 	}
 	if len(channels) == 0 {
 		return
@@ -332,15 +348,8 @@ func (e *alertEngine) notifyEvent(ctx context.Context, eventID int64, rule model
 	}
 	success := false
 	for _, channel := range channels {
-		var sendErr error
-		switch channel.Type {
-		case "webhook":
-			sendErr = e.sendWebhook(ctx, channel, payload)
-		case "telegram":
-			sendErr = e.sendTelegram(ctx, channel, rule, node, kind, condition)
-		default:
-			sendErr = errors.New("unsupported notification channel")
-		}
+		telegramText := fmt.Sprintf("NyaServerMonitor %s\n规则：%s\n节点：%s\n%s", kind, rule.Name, node.Name, condition.message)
+		sendErr := e.sendNotificationChannel(ctx, channel, payload, telegramText)
 		if sendErr != nil {
 			e.log.Warn("send notification failed", "channel_id", channel.ID, "error", sendErr)
 			continue
@@ -352,6 +361,43 @@ func (e *alertEngine) notifyEvent(ctx context.Context, eventID int64, rule model
 			e.log.Warn("mark alert event notified failed", "event_id", eventID, "error", err)
 		}
 	}
+}
+
+func (e *alertEngine) sendTestNotification(ctx context.Context, id string) error {
+	record, err := e.store.GetNotificationChannelRecord(ctx, id)
+	if err != nil {
+		return err
+	}
+	channel, err := e.openNotificationChannel(record)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{
+		"event":       "test",
+		"rule":        "通知渠道测试",
+		"rule_type":   "test",
+		"node":        "NyaServerMonitor",
+		"node_id":     "",
+		"value":       0,
+		"message":     testNotificationMessage,
+		"occurred_at": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	return e.sendNotificationChannel(ctx, channel, payload, "NyaServerMonitor 测试通知\n"+testNotificationMessage)
+}
+
+func (e *alertEngine) sendNotificationChannel(ctx context.Context, channel notificationChannel, payload map[string]any, telegramText string) error {
+	switch channel.Type {
+	case "webhook":
+		return e.sendWebhook(ctx, channel, payload)
+	case "telegram":
+		return e.sendTelegramText(ctx, channel, telegramText)
+	default:
+		return errors.New("unsupported notification channel")
+	}
+}
+
+func (e *alertEngine) sendTelegram(ctx context.Context, channel notificationChannel, rule model.AlertRule, node model.Node, kind string, condition alertCondition) error {
+	return e.sendTelegramText(ctx, channel, fmt.Sprintf("NyaServerMonitor %s\n规则：%s\n节点：%s\n%s", kind, rule.Name, node.Name, condition.message))
 }
 
 func (e *alertEngine) sendWebhook(ctx context.Context, channel notificationChannel, payload map[string]any) error {
@@ -371,7 +417,7 @@ func (e *alertEngine) sendWebhook(ctx context.Context, channel notificationChann
 	}
 	response, err := e.client.Do(request)
 	if err != nil {
-		return err
+		return errors.New("webhook request failed")
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
@@ -381,10 +427,10 @@ func (e *alertEngine) sendWebhook(ctx context.Context, channel notificationChann
 	return nil
 }
 
-func (e *alertEngine) sendTelegram(ctx context.Context, channel notificationChannel, rule model.AlertRule, node model.Node, kind string, condition alertCondition) error {
+func (e *alertEngine) sendTelegramText(ctx context.Context, channel notificationChannel, message string) error {
 	payload, err := json.Marshal(map[string]string{
 		"chat_id": channel.target,
-		"text":    fmt.Sprintf("NyaServerMonitor %s\n规则：%s\n节点：%s\n%s", kind, rule.Name, node.Name, condition.message),
+		"text":    message,
 	})
 	if err != nil {
 		return err
@@ -397,7 +443,7 @@ func (e *alertEngine) sendTelegram(ctx context.Context, channel notificationChan
 	request.Header.Set("Content-Type", "application/json")
 	response, err := e.client.Do(request)
 	if err != nil {
-		return err
+		return errors.New("Telegram request failed")
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))

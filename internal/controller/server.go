@@ -194,6 +194,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/alerts/rules/{id}", s.withAuth(s.handleUpdateAlertRule))
 	s.mux.HandleFunc("DELETE /api/alerts/rules/{id}", s.withAuth(s.handleDeleteAlertRule))
 	s.mux.HandleFunc("POST /api/alerts/channels", s.withAuth(s.handleCreateNotificationChannel))
+	s.mux.HandleFunc("POST /api/alerts/channels/{id}/test", s.withAuth(s.handleTestNotificationChannel))
 	s.mux.HandleFunc("DELETE /api/alerts/channels/{id}", s.withAuth(s.handleDeleteNotificationChannel))
 	s.mux.HandleFunc("GET /api/controller/info", s.withAuth(s.handleControllerInfo))
 	s.mux.HandleFunc("GET /api/nodes", s.withAuth(s.handleListNodes))
@@ -958,6 +959,28 @@ func (s *Server) handleCreateNotificationChannel(w http.ResponseWriter, r *http.
 	}
 	_ = s.store.AddAudit(r.Context(), session.Username, "notification_channel_created", id, map[string]any{"type": input.Type})
 	writeJSON(w, http.StatusCreated, channel)
+}
+
+func (s *Server) handleTestNotificationChannel(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	if s.alerts.box == nil {
+		writeError(w, http.StatusServiceUnavailable, "set NYASM_NOTIFICATION_KEY before testing notification channels")
+		return
+	}
+	id := r.PathValue("id")
+	if !validate.Identifier(id) {
+		writeError(w, http.StatusBadRequest, "invalid notification channel id")
+		return
+	}
+	if err := s.alerts.sendTestNotification(r.Context(), id); errors.Is(err, store.ErrNotificationChannelNotFound) {
+		writeError(w, http.StatusNotFound, "notification channel not found")
+		return
+	} else if err != nil {
+		_ = s.store.AddAudit(r.Context(), session.Username, "notification_channel_test_failed", id, nil)
+		writeError(w, http.StatusBadGateway, "notification test failed: "+err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, "notification_channel_test_sent", id, nil)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "test notification sent"})
 }
 
 func (s *Server) handleDeleteNotificationChannel(w http.ResponseWriter, r *http.Request, session auth.Session) {

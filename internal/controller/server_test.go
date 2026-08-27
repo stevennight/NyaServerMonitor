@@ -2,7 +2,11 @@ package controller
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -366,6 +370,7 @@ func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 		{http.MethodPut, "/api/alerts/rules/rule_secret"},
 		{http.MethodDelete, "/api/alerts/rules/rule_secret"},
 		{http.MethodPost, "/api/alerts/channels"},
+		{http.MethodPost, "/api/alerts/channels/channel_secret/test"},
 		{http.MethodDelete, "/api/alerts/channels/channel_secret"},
 		{http.MethodGet, "/api/controller/info"},
 		{http.MethodGet, "/api/nodes"},
@@ -408,6 +413,99 @@ func TestUnauthenticatedPrivateAPIsRequireSession(t *testing.T) {
 	}
 	if _, ok := setupBody["needs_setup"]; !ok {
 		t.Fatalf("setup status missing needs_setup: %s", setupResponse.Body.String())
+	}
+}
+
+func TestTestNotificationChannelSendsStoredWebhook(t *testing.T) {
+	ctx := context.Background()
+	var receivedBody []byte
+	var receivedSignature string
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("webhook method = %s, want POST", r.Method)
+		}
+		receivedBody, _ = io.ReadAll(r.Body)
+		receivedSignature = r.Header.Get("X-NyaSM-Signature")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer webhook.Close()
+
+	const notificationKey = "test-notification-encryption-key"
+	const webhookSecret = "test-webhook-signing-secret"
+	box := newSecretBox(notificationKey)
+	targetCiphertext, err := box.seal(webhook.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretCiphertext, err := box.seal(webhookSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, t.TempDir()+"/notification-test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.CreateNotificationChannel(ctx, store.NotificationChannelRecord{
+		Channel:          model.NotificationChannel{ID: "channel_test", Name: "Test webhook", Type: "webhook", Enabled: true},
+		TargetCiphertext: targetCiphertext,
+		SecretCiphertext: secretCiphertext,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewServer(Config{
+		PublicURL:        "http://127.0.0.1:8080",
+		NotificationKey:  notificationKey,
+		SessionLifetime:  time.Hour,
+		OfflineAfter:     time.Minute,
+		CleanupInterval:  time.Minute,
+		MetricsRetention: time.Hour,
+	}, st)
+	s.alerts.client = webhook.Client()
+	session, err := s.sessions.Create(1, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/alerts/channels/channel_test/test", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("test notification status: got %d %s", response.Code, response.Body.String())
+	}
+	var result map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["message"] != "test notification sent" {
+		t.Fatalf("test notification response = %#v", result)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["event"] != "test" || payload["rule"] != "通知渠道测试" || payload["message"] != testNotificationMessage {
+		t.Fatalf("test notification payload = %#v", payload)
+	}
+	digest := hmac.New(sha256.New, []byte(webhookSecret))
+	_, _ = digest.Write(receivedBody)
+	if receivedSignature != hex.EncodeToString(digest.Sum(nil)) {
+		t.Fatalf("test notification signature = %q, want %q", receivedSignature, hex.EncodeToString(digest.Sum(nil)))
+	}
+	events, err := st.ListAlertEvents(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("test notification created alert events: %#v", events)
+	}
+	audit, err := st.ListAudit(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) == 0 || audit[0].Action != "notification_channel_test_sent" || audit[0].Target != "channel_test" {
+		t.Fatalf("test notification audit = %#v", audit)
 	}
 }
 
