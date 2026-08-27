@@ -23,7 +23,7 @@
 
 token 只在创建、显式轮换或管理员请求安装命令的受保护响应中出现，节点列表、节点详情、审计和指标接口不会返回 token。若没有配置 `NYASM_NODE_TOKEN_KEY`，旧节点无法重新生成安装命令，只能显式轮换一次。生产环境必须通过 Caddy、反向代理或直接 HTTPS 暴露主节点，并限制管理面板访问来源。
 
-节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；该子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
+节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；在普通主机上 systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；检测到 LXC 等容器时，安装器会关闭依赖 mount namespace 的文件系统隔离，但仍保留 `NoNewPrivileges`。更新子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
 
 ## 公开状态页
 
@@ -35,7 +35,7 @@ token 只在创建、显式轮换或管理员请求安装命令的受保护响�
 
 ## 子节点最小权限
 
-当前安装器暂时继续使用 root 运行探针，以保证进程信息完整并兼容 ICMP。探针仍采用 `deploy/systemd/nyasm-node.service` 中的 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`，只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP/ICMP/TLS 检查，不调用 shell 或外部命令。`nyasm-node-update.service` 是独立的固定 root oneshot，仅为替换 root-owned 二进制而存在，不接受 controller 下发的服务名、命令或参数。
+当前安装器暂时继续使用 root 运行探针，以保证进程信息完整并兼容 ICMP。普通主机上的探针采用 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome` 和 `PrivateTmp`；受限 LXC 等容器无法创建 mount namespace 时，安装器会关闭后三项文件系统隔离，避免服务在启动前以 `226/NAMESPACE` 失败。探针只读取 `/proc`、网络接口和磁盘统计，并执行预定义的 HTTP/TCP/ICMP/TLS 检查，不调用 shell 或外部命令。`nyasm-node-update.service` 是独立的固定 root oneshot，仅为替换 root-owned 二进制而存在，不接受 controller 下发的服务名、命令或参数。
 
 健康检查 JSON 由节点管理员本地维护。主节点管理员不能通过面板改变检查目标；这避免了主节点被接管后借探针向内网发起任意请求或执行命令的控制链路。若需要变更检查，请在目标机器上审查并修改本地文件后重启探针。
 

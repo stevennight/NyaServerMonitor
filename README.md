@@ -50,7 +50,7 @@ go run ./cmd/node
 
 安装命令只在管理员登录后的创建、安装命令查看或凭据轮换响应中出现。`/install.sh`、`/downloads/nyasm-node` 和签名清单是公开下载端点，但不包含任何节点 token；生产环境必须使用 HTTPS。controller 默认从 `/usr/local/bin/nyasm-node` 提供 node 二进制，签名更新还要求 `NYASM_NODE_BINARY_DIR` 中存在两种目标架构、manifest、manifest 签名、公钥标识和二进制签名文件。
 
-生产环境应使用 HTTPS。HTTP 只允许本机回环地址；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。探针安装脚本当前仍以 root 安装并运行主 systemd 服务，这是为了完整读取进程信息并使用 ICMP；更新由固定的 root updater service 执行，服务没有远程执行能力，且保留了 systemd 文件系统和权限限制。
+生产环境应使用 HTTPS。HTTP 只允许本机回环地址；`--insecure-skip-verify` 仅作为显式开发选项，不能用于生产。探针安装脚本当前仍以 root 安装并运行主 systemd 服务，这是为了完整读取进程信息并使用 ICMP；普通主机上服务保留 systemd 文件系统和权限限制，检测到 LXC 等受限容器时会关闭依赖 mount namespace 的文件系统隔离并保留 `NoNewPrivileges`，以兼容容器运行时；更新由固定的 root updater service 执行，服务没有远程执行能力。
 
 首页默认是公开状态页，不要求登录。公开页展示管理员配置的节点名称、地区、分组、标签、在线/离线状态、CPU/内存/磁盘百分比、累计流量、运行时长和服务检查汇总；节点详情弹窗还提供不含 IP、主机名、网卡名、节点版本或检查目标的聚合历史图表。管理员登录后，根路径仍然是监控首页，会显示完整节点状态、IP 和详细指标；节点创建、凭据轮换、撤销/恢复及审计日志位于 `/admin` 管理后台。
 

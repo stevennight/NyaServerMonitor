@@ -177,8 +177,32 @@ NYASM_LOG_LEVEL=info
 EOF
 chmod 600 /etc/nyasm/node.env
 
+filesystem_sandbox='ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true'
+node_read_write_paths='ReadWritePaths=/var/lib/nyasm'
+update_read_write_paths='ReadWritePaths=/var/lib/nyasm /usr/local/bin'
+container_runtime=''
+if [ -e /run/systemd/container ]; then
+	container_runtime='container'
+fi
+if command -v systemd-detect-virt >/dev/null 2>&1; then
+	detected_container="$(systemd-detect-virt --container 2>/dev/null || true)"
+	if [ -n "$detected_container" ]; then
+		container_runtime="$detected_container"
+	fi
+fi
+if [ -n "$container_runtime" ]; then
+	echo "Detected container runtime ($container_runtime); disabling systemd filesystem namespaces"
+	filesystem_sandbox='ProtectSystem=off
+ProtectHome=false
+PrivateTmp=false'
+	node_read_write_paths=''
+	update_read_write_paths=''
+fi
+
 echo "[6/7] Installing systemd services"
-cat > /etc/systemd/system/nyasm-node.service <<'EOF'
+cat > /etc/systemd/system/nyasm-node.service <<EOF
 [Unit]
 Description=NyaServerMonitor node agent
 After=network-online.target
@@ -191,16 +215,14 @@ ExecStart=/usr/local/bin/nyasm-node
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/lib/nyasm
+$filesystem_sandbox
+$node_read_write_paths
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/nyasm-node-update.service <<'EOF'
+cat > /etc/systemd/system/nyasm-node-update.service <<EOF
 [Unit]
 Description=NyaServerMonitor signed node updater
 After=network-online.target
@@ -213,10 +235,8 @@ ExecStart=/usr/local/bin/nyasm-node update
 User=root
 Group=root
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/var/lib/nyasm /usr/local/bin
+$filesystem_sandbox
+$update_read_write_paths
 UMask=0077
 
 EOF
