@@ -124,7 +124,7 @@
     .world-map-base{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;object-fit:fill}
     .world-map-svg{position:absolute;inset:0;z-index:1;display:block;width:100%;height:100%;min-height:0;overflow:visible;pointer-events:none}
     .world-map-svg .map-marker{pointer-events:all}
-    .map-marker .marker-core{fill:var(--green);stroke:#e2fff3;stroke-width:2.2;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 5px rgba(73,209,141,.48))}
+    .map-marker .marker-core{fill:var(--green);stroke:rgba(226,255,243,.78);stroke-width:1.1;paint-order:stroke fill;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 5px rgba(73,209,141,.48))}
     .map-marker .marker-ring{fill:none;stroke:rgba(73,209,141,.84);stroke-width:1.5;vector-effect:non-scaling-stroke;animation:map-pulse-rich 2.8s ease-out infinite}
     .map-marker .marker-count{fill:#081719;stroke:var(--green);stroke-width:1.1;vector-effect:non-scaling-stroke;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
     .map-marker text{fill:#edfff7;font:700 11px Inter,ui-sans-serif,system-ui,sans-serif;pointer-events:none;text-anchor:middle;dominant-baseline:middle}
@@ -134,7 +134,7 @@
     .map-marker[data-map-state="offline"] .marker-core{fill:var(--red);stroke:#ffe5e5;filter:drop-shadow(0 0 5px rgba(235,102,102,.42))}
     .map-marker[data-map-state="offline"] .marker-ring{stroke:rgba(235,102,102,.84)}
     .map-marker[data-map-state="offline"] .marker-count{stroke:var(--red)}
-    .map-marker:hover .marker-core,.map-marker:focus .marker-core{fill:#fff;stroke:var(--blue);filter:drop-shadow(0 0 7px rgba(109,181,223,.62))}
+    .map-marker:hover .marker-core,.map-marker:focus .marker-core{stroke:var(--blue);stroke-opacity:1;filter:brightness(1.16) drop-shadow(0 0 7px rgba(109,181,223,.62))}
     .map-marker:focus-visible{outline:2px solid var(--blue);outline-offset:4px}
     .map-empty{position:absolute;inset:0;z-index:2;display:grid;place-items:center;min-height:0;color:var(--muted);font-size:13px;pointer-events:none;background:rgba(7,21,27,.38)}
     .geo-map-legend-dot.map-legend-attention{background:var(--yellow);box-shadow:0 0 0 3px rgba(245,194,76,.12)}
@@ -307,10 +307,10 @@
      .world-map-svg .world-map-ocean,.world-map-svg .world-map-labels{pointer-events:none}
      .map-surface{background:var(--theme-map-surface);background-image:linear-gradient(135deg,var(--theme-map-grid),transparent 42%),linear-gradient(315deg,rgba(73,209,141,.04),transparent 45%);border-color:var(--theme-map-border)}
      .map-empty{background:var(--theme-map-empty-bg)}
-     .map-marker .marker-core{stroke:var(--map-marker-text)}
+     .map-marker .marker-core{stroke:var(--map-marker-text);stroke-opacity:.72;stroke-width:1.1}
      .map-marker .marker-count{fill:var(--map-marker-count-bg)}
      .map-marker text{fill:var(--map-marker-text)}
-     .map-marker:hover .marker-core,.map-marker:focus .marker-core{fill:var(--panel);stroke:var(--blue)}
+     .map-marker:hover .marker-core,.map-marker:focus .marker-core{stroke:var(--blue);stroke-opacity:1;filter:brightness(1.16) drop-shadow(0 0 7px rgba(109,181,223,.62))}
      .map-popover{background:var(--panel);border-color:var(--theme-hover-border);box-shadow:0 14px 35px var(--theme-overlay-shadow)}
      @media(max-width:700px){.theme-switch-label{display:none}.private-top .top-actions{flex-wrap:wrap;justify-content:flex-end}.theme-switch button{padding-left:6px;padding-right:6px}}
    </style>
