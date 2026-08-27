@@ -318,6 +318,21 @@
      .map-popover{background:var(--panel);border-color:var(--theme-hover-border);box-shadow:0 14px 35px var(--theme-overlay-shadow)}
      @media(max-width:700px){.theme-switch-label{display:none}.private-top .top-actions{flex-wrap:wrap;justify-content:flex-end}.theme-switch button{padding-left:6px;padding-right:6px}}
    </style>
+  <style>
+    .map-marker.map-cluster .marker-core{fill:var(--blue);stroke:var(--map-marker-text);stroke-width:1.4}
+    .map-marker.map-cluster .marker-ring{stroke:rgba(109,181,223,.9)}
+    .map-marker.map-cluster .marker-count{fill:var(--blue);stroke:var(--map-marker-text);stroke-width:1.2}
+    .map-marker.map-cluster text{fill:#061317}
+    .map-spiderfy-line{fill:none;stroke:var(--blue);stroke-width:1.2;stroke-dasharray:3 3;stroke-opacity:.72;vector-effect:non-scaling-stroke;pointer-events:none}
+    .map-spiderfy-marker .marker-ring{display:none}
+    .map-spiderfy-hub{cursor:pointer;outline:0;pointer-events:all}
+    .map-spiderfy-hub circle{fill:var(--panel);stroke:var(--blue);stroke-width:1.5;vector-effect:non-scaling-stroke;filter:drop-shadow(0 1px 3px rgba(0,0,0,.4))}
+    .map-spiderfy-hub text{fill:var(--text);font:700 13px Inter,ui-sans-serif,system-ui,sans-serif;text-anchor:middle;pointer-events:none}
+    .map-spiderfy-hub:focus-visible{outline:2px solid var(--blue);outline-offset:4px}
+    .map-surface[data-map-controls="top-left"] .map-zoom-controls{top:12px;right:auto;left:12px;bottom:auto}
+    .map-surface[data-map-controls="bottom-right"] .map-zoom-controls{top:auto;right:12px;left:auto;bottom:12px}
+    .map-surface[data-map-controls="bottom-left"] .map-zoom-controls{top:auto;right:auto;left:12px;bottom:12px}
+  </style>
 </head>
 <body>
   <div id="root"></div>
@@ -334,8 +349,9 @@
      const mapModeValues = ['country', 'region', 'city'];
      const loadMapMode = () => { try { const value = localStorage.getItem('nyasm_map_mode'); return mapModeValues.includes(value) ? value : 'country'; } catch (_) { return 'country'; } };
      const saveMapMode = value => { try { localStorage.setItem('nyasm_map_mode', value); } catch (_) {} };
-     state.mapMode = loadMapMode();
-     state.mapZoom = 1;
+    state.mapMode = loadMapMode();
+    state.mapZoom = 1;
+    state.mapSpiderfyKey = '';
     const go = (area, replace=false) => { const path=area==='admin'?'/admin':'/'; if(window.location.pathname!==path)history[replace?'replaceState':'pushState']({},'',path); state.area=area;state.view=area==='admin'?'nodes':'overview';state.selected=null;state.metrics=[];state.modal=null;state.showLogin=false;state.error='';startAutoRefresh();startTelemetryStream();render();if(state.user){loadControllerInfo();refresh(true);}else refreshPublic(true); };
     window.addEventListener('popstate',()=>{state.area=routeArea();state.view=state.area==='admin'?'nodes':'overview';state.selected=null;state.metrics=[];state.modal=null;state.showLogin=!state.user&&state.area==='admin';startTelemetryStream();render();if(state.user)refresh(true);else refreshPublic(true);});
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -473,11 +489,31 @@
       }
       return { mode, groups: [...groups.values()].sort((left, right) => left.key.localeCompare(right.key, 'zh-CN')), unlocated, total: (nodes || []).length };
     };
-    const mapMarkerScale = zoom => { const value=Math.max(1,Math.min(4,Number(zoom)||1)); const screenScale=Math.max(.5,1/value); return screenScale/value; };
-    const mapMarkerMarkup = group => { const x=Math.min(970,Math.max(30,Number(group.point[0]))); const y=Math.min(440,Math.max(30,Number(group.point[1]))); const count=group.nodes.length; const markerState=group.online===0?'offline':group.problem?'attention':'healthy'; const markerScale=mapMarkerScale(state.mapZoom); const label=`${mapGroupTitle(group)}，${count} 个节点，在线 ${group.online} 个`; return `<g class="map-marker" data-map-marker data-map-x="${x}" data-map-y="${y}" data-map-key="${esc(group.key)}" data-map-state="${markerState}" transform="translate(${x} ${y}) scale(${markerScale})" role="button" tabindex="0" aria-label="${esc(label)}"><title>${esc(label)}</title><circle class="marker-ring" cx="0" cy="0" r="9"></circle><circle class="marker-core" cx="0" cy="0" r="7"></circle><circle class="marker-count" cx="15" cy="-15" r="11"></circle><text x="15" y="-15">${count>99?'99+':count}</text></g>`; };
+    const mapZoomMaximum = 4;
+    const mapClusterScreenRadius = 26;
+    const mapMarkerScale = zoom => { const value=Math.max(1,Math.min(mapZoomMaximum,Number(zoom)||1)); const screenScale=Math.max(.5,1/value); return screenScale/value; };
+    const mapSurfaceWidth = surface => Number(surface?.clientWidth||0) || Math.max(320, Math.min(1200, Number(window.innerWidth||1000)-40));
+    const mapClusterWorldRadius = surface => mapClusterScreenRadius*1000/Math.max(1,mapSurfaceWidth(surface)*mapZoomValue());
+    const mapMarkerPoint = point => [Math.min(970,Math.max(30,Number(point?.[0])||0)),Math.min(440,Math.max(30,Number(point?.[1])||0))];
+    const mapScreenClusters = (groups, surface) => {
+      const radius=mapClusterWorldRadius(surface);
+      const clusters=[];
+      for(const group of groups||[]){
+        const candidate=clusters.find(item=>Math.hypot(Number(group.point[0])-item.anchor[0],Number(group.point[1])-item.anchor[1])<=radius);
+        if(candidate){candidate.groups.push(group);candidate.point=[candidate.groups.reduce((sum,item)=>sum+Number(item.point[0]),0)/candidate.groups.length,candidate.groups.reduce((sum,item)=>sum+Number(item.point[1]),0)/candidate.groups.length];}
+        else clusters.push({anchor:[Number(group.point[0]),Number(group.point[1])],point:[Number(group.point[0]),Number(group.point[1])],groups:[group]});
+      }
+      return clusters.map(item=>{
+        if(item.groups.length===1)return {...item.groups[0],isCluster:false,groups:item.groups};
+        const groups=item.groups;
+        return {key:'cluster|'+groups.map(group=>group.key).sort().join('||'),mode:groups[0].mode,code:'',groups,nodes:groups.flatMap(group=>group.nodes),online:groups.reduce((total,group)=>total+group.online,0),problem:groups.reduce((total,group)=>total+group.problem,0),point:item.point,isCluster:true};
+      });
+    };
+    const mapMarkerMarkup = (group, options={}) => { const [x,y]=mapMarkerPoint(options.point||group.point); const isCluster=Boolean(group.isCluster); const spiderfied=Boolean(options.spiderfied); const markerClass='map-marker'+(isCluster?' map-cluster':'')+(spiderfied?' map-spiderfy-marker':''); const key=String(options.key||group.key); const count=isCluster?group.groups.length:group.nodes.length; const markerText=isCluster?(count>99?'99+':count):(count>99?'99+':count); const markerState=group.online===0?'offline':group.problem?'attention':'healthy'; const markerScale=mapMarkerScale(state.mapZoom); const label=isCluster?`附近 ${count} 个位置，${group.nodes.length} 个节点，在线 ${group.online} 个`:`${mapGroupTitle(group)}，${count} 个节点，在线 ${group.online} 个`; return `<g class="${markerClass}" data-map-marker data-map-x="${x}" data-map-y="${y}" data-map-key="${esc(key)}"${isCluster?' data-map-cluster="true"':''}${spiderfied?' data-map-spiderfy-marker="true"':''} data-map-state="${markerState}" transform="translate(${x} ${y}) scale(${markerScale})" role="button" tabindex="0" aria-label="${esc(label)}"><title>${esc(label)}</title><circle class="marker-ring" cx="0" cy="0" r="9"></circle><circle class="marker-core" cx="0" cy="0" r="${isCluster?'9':'7'}"></circle><circle class="marker-count" cx="15" cy="-15" r="${isCluster?'12':'11'}"></circle><text x="15" y="-15">${markerText}</text></g>`; };
+    const mapSpiderfyMarkup = (cluster, surface) => { const anchor=mapMarkerPoint(cluster.point); const count=cluster.groups.length; const radiusPixels=Math.min(96,Math.max(46,30+count*8)); const radiusWorld=radiusPixels*1000/Math.max(1,mapSurfaceWidth(surface)*mapZoomValue()); const items=cluster.groups.map((group,index)=>{const angle=-Math.PI/2+(Math.PI*2*index/count);return {group,point:mapMarkerPoint([anchor[0]+Math.cos(angle)*radiusWorld,anchor[1]+Math.sin(angle)*radiusWorld])};}); const lines=items.map(item=>`<line class="map-spiderfy-line" x1="${anchor[0]}" y1="${anchor[1]}" x2="${item.point[0]}" y2="${item.point[1]}"></line>`).join(''); const markers=items.map(item=>mapMarkerMarkup(item.group,{point:item.point,spiderfied:true})).join(''); const label=`收起 ${count} 个展开位置`; const hubScale=mapMarkerScale(mapZoomValue()); return `<g class="map-spiderfy" data-map-spiderfy="${esc(cluster.key)}"><g class="map-spiderfy-lines">${lines}</g>${markers}<g class="map-spiderfy-hub" data-map-spiderfy-close role="button" tabindex="0" aria-label="${esc(label)}" transform="translate(${anchor[0]} ${anchor[1]}) scale(${hubScale})"><title>${esc(label)}</title><circle cx="0" cy="0" r="22"></circle><text x="0" y="1">×</text></g></g>`; };
     const mapStatusLegendMarkup = '<span class="geo-map-legend-item"><span class="geo-map-legend-dot"></span>全部在线</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-attention"></span>部分异常</span><span class="geo-map-legend-item"><span class="geo-map-legend-dot map-legend-offline"></span>暂无在线节点</span>';
     const mapZoomControlsMarkup = () => { const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); return `<div class="map-zoom-controls" data-map-toolbar role="group" aria-label="地图缩放"><button type="button" class="map-zoom-button" data-map-zoom-out aria-label="缩小地图" title="缩小地图">−</button><span class="map-zoom-label" data-map-zoom-label>${Math.round(zoom*100)}%</span><button type="button" class="map-zoom-button" data-map-zoom-in aria-label="放大地图" title="放大地图">+</button><button type="button" class="map-zoom-button" data-map-zoom-reset aria-label="重置地图视图" title="重置地图视图">↺</button></div>`; };
-    const mapSurfaceMarkup = nodes => { const result=mapGroups(nodes,state.mapMode); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true" draggable="false">`; const markers=result.groups.map(mapMarkerMarkup).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item" title="${esc(mapGroupTitle(group))}"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(mapGroupTitle(group))} ${group.nodes.length}</span>`).join(''); const empty=result.groups.length?'':`<div class="map-empty">${result.unlocated?'暂时没有可定位的'+mapModeLabel(result.mode):'暂无节点地区数据'}</div>`; const legendMarkup=result.groups.length||result.unlocated?`<div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`:''; const zoom=Math.max(1,Math.min(4,Number(state.mapZoom)||1)); return `<div class="map-surface" data-map-surface><div class="map-canvas" data-map-canvas style="transform:translate3d(0,0,0) scale(${zoom})">${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点${esc(mapModeLabel(result.mode))}分布地图"><g data-map-markers>${markers}</g></svg></div>${mapZoomControlsMarkup()}${empty}<div class="map-popover" data-map-popover hidden></div></div>${legendMarkup}`; };
+    const mapSurfaceMarkup = (nodes, surface=null) => { const result=mapGroups(nodes,state.mapMode); const displayGroups=mapScreenClusters(result.groups,surface); const image=`<img class="world-map-base" src="${worldMapAssetPath}" alt="" aria-hidden="true" draggable="false">`; const markers=displayGroups.map(group=>group.isCluster&&state.mapSpiderfyKey===group.key?mapSpiderfyMarkup(group,surface):mapMarkerMarkup(group)).join(''); const legend=result.groups.slice(0,8).map(group=>`<span class="geo-map-legend-item" title="${esc(mapGroupTitle(group))}"><span class="geo-map-legend-dot map-legend-${group.online===0?'offline':group.problem?'attention':'healthy'}"></span>${esc(mapGroupTitle(group))} ${group.nodes.length}</span>`).join(''); const empty=result.groups.length?'':`<div class="map-empty">${result.unlocated?'暂时没有可定位的'+mapModeLabel(result.mode):'暂无节点地区数据'}</div>`; const legendMarkup=result.groups.length||result.unlocated?`<div class="geo-map-legend">${mapStatusLegendMarkup}${legend}${result.groups.length>8?`<span class="geo-map-legend-item">其他 ${result.groups.length-8}</span>`:''}${result.unlocated?`<span class="geo-map-legend-item">待定位 ${result.unlocated}</span>`:''}</div>`:''; const zoom=Math.max(1,Math.min(mapZoomMaximum,Number(state.mapZoom)||1)); return `<div class="map-surface" data-map-surface><div class="map-canvas" data-map-canvas style="transform:translate3d(0,0,0) scale(${zoom})">${image}<svg class="world-map-svg" viewBox="0 0 1000 470" role="img" aria-label="节点${esc(mapModeLabel(result.mode))}分布地图"><g data-map-markers>${markers}</g></svg></div>${mapZoomControlsMarkup()}${empty}<div class="map-popover" data-map-popover hidden></div></div>${legendMarkup}`; };
     const mapGroupMarkup = group => { const flag=flagImageMarkup(group.code); return `${flag?`<span class="country-flag" aria-hidden="true">${flag}</span>`:''}<span>${esc(mapGroupTitle(group))}</span>`; };
     const mapNodeStatusLabel = status => ({online:'在线',offline:'离线',pending:'待上报',revoked:'已撤销'}[status]||'检查异常');
     const mapPopoverMarkup = (group, expanded=false) => { const online=group.nodes.filter(node=>node.status==='online').length; const nodes=expanded?group.nodes:group.nodes.slice(0,8); const list=nodes.map(node=>`<li><button type="button" class="map-node-link" data-map-node="${esc(node.id)}"><span>${esc(node.name||'未命名节点')}</span><span>${esc(mapNodeStatusLabel(node.status))}</span></button></li>`).join(''); const coordinates=group.mode==='country'?'国家级标记':(Number.isFinite(group.latitude)&&Number.isFinite(group.longitude)?`ipwho.is · ${group.latitude.toFixed(3)}, ${group.longitude.toFixed(3)}`:'待定位'); const more=!expanded&&group.nodes.length>8?`<button type="button" class="map-popover-expand" data-map-expand="${esc(group.key)}">展开全部节点（${group.nodes.length}）</button>`:''; return `<div class="map-popover-head"><strong>${mapGroupMarkup(group)} · ${group.nodes.length} 个节点</strong><button type="button" class="map-popover-close" data-map-close aria-label="关闭">×</button></div><div class="map-popover-meta">${esc(mapModeLabel(group.mode))} · 在线 ${online} · 其他 ${Math.max(0,group.nodes.length-online)}</div><div class="map-popover-coordinates">${esc(coordinates)}</div><ul class="map-popover-list">${list}</ul>${more}`; };
@@ -487,11 +523,16 @@
     const mapZoomValue = () => Math.max(1, Math.min(4, Number(state.mapZoom) || 1));
     const mapPanLimits = (surface, zoom) => { const width=Number(surface?.clientWidth||0); const height=Number(surface?.clientHeight||0); return {x:Math.max(0,(zoom-1)*width/2),y:Math.max(0,(zoom-1)*height/2)}; };
     const clampMapPan = (surface, pan=state.mapPan) => { const limits=mapPanLimits(surface,mapZoomValue()); const x=Number(pan?.x); const y=Number(pan?.y); return {x:Math.max(-limits.x,Math.min(limits.x,Number.isFinite(x)?x:0)),y:Math.max(-limits.y,Math.min(limits.y,Number.isFinite(y)?y:0))}; };
+    const mapPointToSurface = (surface, point) => { const width=mapSurfaceWidth(surface); const height=Number(surface?.clientHeight||0)||width*470/1000; return {x:Number(point?.[0]||0)*width/1000,y:Number(point?.[1]||0)*height/470}; };
+    const mapZoomToCluster = (panel, cluster, surface) => { const points=cluster.groups.map(group=>group.point); const xs=points.map(point=>Number(point[0])); const ys=points.map(point=>Number(point[1])); const span=Math.max(1,Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys)); const width=mapSurfaceWidth(surface); const surfaceWidth=Number(surface?.clientWidth||width); const surfaceHeight=Number(surface?.clientHeight||width*470/1000); const target=Math.min(mapZoomMaximum,Math.max(mapZoomValue()+.75,(mapClusterScreenRadius*2*1000)/(width*span))); const base=mapPointToSurface(surface,cluster.point); state.mapZoom=target; state.mapPan={x:-(base.x-surfaceWidth/2)*target,y:-(base.y-surfaceHeight/2)*target}; state.mapSpiderfyKey=target>=mapZoomMaximum&&span*width*target/1000<=mapClusterScreenRadius?cluster.key:''; refreshMapPanel(panel); };
+    const positionMapControls = surface => { const controls=surface?.querySelector('[data-map-toolbar]'); if(!surface||!controls)return; const width=Number(surface.clientWidth||0); const height=Number(surface.clientHeight||0); const controlWidth=Number(controls.offsetWidth||42); const controlHeight=Number(controls.offsetHeight||120); const inset=12; const candidates=[{name:'top-right',left:Math.max(inset,width-controlWidth-inset),top:inset},{name:'top-left',left:inset,top:inset},{name:'bottom-right',left:Math.max(inset,width-controlWidth-inset),top:Math.max(inset,height-controlHeight-inset)},{name:'bottom-left',left:inset,top:Math.max(inset,height-controlHeight-inset)}]; const surfaceBox=surface.getBoundingClientRect(); const markers=[...surface.querySelectorAll('[data-map-marker]')].map(marker=>{const box=marker.getBoundingClientRect();return {left:box.left-surfaceBox.left,top:box.top-surfaceBox.top,right:box.right-surfaceBox.left,bottom:box.bottom-surfaceBox.top};}); const score=candidate=>markers.reduce((total,marker)=>{const overlapWidth=Math.max(0,Math.min(candidate.left+controlWidth,marker.right)-Math.max(candidate.left,marker.left));const overlapHeight=Math.max(0,Math.min(candidate.top+controlHeight,marker.bottom)-Math.max(candidate.top,marker.top));return total+(overlapWidth*overlapHeight?10000+overlapWidth*overlapHeight:0);},0); const selected=candidates.reduce((best,candidate)=>score(candidate)<score(best)?candidate:best,candidates[0]); surface.dataset.mapControls=selected.name; };
     const applyMapMarkerScale = (surface, zoom) => { const scale=mapMarkerScale(zoom).toFixed(4); surface?.querySelectorAll('[data-map-marker]').forEach(marker=>{const x=Number(marker.dataset.mapX);const y=Number(marker.dataset.mapY);if(Number.isFinite(x)&&Number.isFinite(y))marker.setAttribute('transform',`translate(${x} ${y}) scale(${scale})`);}); };
-    const applyMapView = (panel, immediate=false) => { const zoom=mapZoomValue(); state.mapZoom=zoom; const surface=panel?.querySelector('[data-map-surface]'); const canvas=surface?.querySelector('[data-map-canvas]'); const pan=clampMapPan(surface); state.mapPan=pan; applyMapMarkerScale(surface,zoom); if(canvas){canvas.style.transition=immediate?'none':'';canvas.style.transform=`translate3d(${pan.x}px,${pan.y}px,0) scale(${zoom})`;} const label=panel?.querySelector('[data-map-zoom-label]'); if(label)label.textContent=Math.round(zoom*100)+'%'; };
-    const applyMapZoom = panel => applyMapView(panel);
+    const applyMapView = (panel, immediate=false) => { const zoom=mapZoomValue(); state.mapZoom=zoom; const surface=panel?.querySelector('[data-map-surface]'); const canvas=surface?.querySelector('[data-map-canvas]'); const pan=clampMapPan(surface); state.mapPan=pan; applyMapMarkerScale(surface,zoom); if(canvas){canvas.style.transition=immediate?'none':'';canvas.style.transform=`translate3d(${pan.x}px,${pan.y}px,0) scale(${zoom})`;} positionMapControls(surface); const label=panel?.querySelector('[data-map-zoom-label]'); if(label)label.textContent=Math.round(zoom*100)+'%'; };
+    const applyMapZoom = panel => refreshMapPanel(panel);
     const updateMapModeButtons = panel => panel?.querySelectorAll('[data-map-mode]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.mapMode===state.mapMode)));
-    const refreshMapPanel = panel => { if(!panel)return; const publicPage=panel.dataset.mapPublic==='true'; const nodes=homeMapNodes(publicPage); const result=mapGroups(nodes,state.mapMode); const content=panel.querySelector('[data-map-content]'); if(content)content.innerHTML=mapSurfaceMarkup(nodes); const summary=panel.querySelector('[data-map-summary]'); if(summary)summary.textContent=mapSummaryText(result,nodes.length); panel.querySelector('[data-map-popover]')?.setAttribute('hidden',''); updateMapModeButtons(panel); applyMapZoom(panel); };
+    const refreshMapPanel = panel => { if(!panel)return; const publicPage=panel.dataset.mapPublic==='true'; const nodes=homeMapNodes(publicPage); const result=mapGroups(nodes,state.mapMode); const content=panel.querySelector('[data-map-content]'); if(content){content.innerHTML=mapSurfaceMarkup(nodes);const surface=content.querySelector('[data-map-surface]');content.innerHTML=mapSurfaceMarkup(nodes,surface);} const summary=panel.querySelector('[data-map-summary]'); if(summary)summary.textContent=mapSummaryText(result,nodes.length); panel.querySelector('[data-map-popover]')?.setAttribute('hidden',''); updateMapModeButtons(panel); applyMapView(panel); };
+    let mapResizeFrame=0;
+    window.addEventListener('resize',()=>{if(mapResizeFrame)return;mapResizeFrame=requestAnimationFrame(()=>{mapResizeFrame=0;document.querySelectorAll('[data-map-panel]').forEach(refreshMapPanel);});});
     const bindMapPan = panel => {
       if (!panel || panel.dataset.mapPanBound === 'true') return;
       panel.dataset.mapPanBound = 'true';
@@ -511,7 +552,7 @@
       panel.addEventListener('pointerdown', event => {
         if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
         const surface = closest(event.target, '[data-map-surface]');
-        if (!surface || closest(event.target, '[data-map-toolbar],[data-map-popover],[data-map-key]')) return;
+        if (!surface || closest(event.target, '[data-map-toolbar],[data-map-popover],[data-map-key],[data-map-spiderfy-close]')) return;
         const canvas = surface.querySelector('[data-map-canvas]');
         if (!canvas) return;
         const pan = clampMapPan(surface);
@@ -561,7 +602,7 @@
         const modeButton=clickTarget?.closest('[data-map-mode]');
         if(modeButton){
           const mode=modeButton.dataset.mapMode;
-          if(mapModeValues.includes(mode)&&mode!==state.mapMode){state.mapMode=mode;saveMapMode(mode);state.mapZoom=1;state.mapPan={x:0,y:0};refreshMapPanel(panel);}
+          if(mapModeValues.includes(mode)&&mode!==state.mapMode){state.mapMode=mode;saveMapMode(mode);state.mapZoom=1;state.mapPan={x:0,y:0};state.mapSpiderfyKey='';refreshMapPanel(panel);}
           return;
         }
         const zoomButton=clickTarget?.closest('[data-map-zoom-in],[data-map-zoom-out],[data-map-zoom-reset]');
@@ -569,9 +610,12 @@
           if(zoomButton.hasAttribute('data-map-zoom-in'))state.mapZoom+=.5;
           else if(zoomButton.hasAttribute('data-map-zoom-out'))state.mapZoom-=.5;
           else{state.mapZoom=1;state.mapPan={x:0,y:0};}
+          state.mapSpiderfyKey='';
           applyMapZoom(panel);
           return;
         }
+        const spiderfyClose=clickTarget?.closest('[data-map-spiderfy-close]');
+        if(spiderfyClose){state.mapSpiderfyKey='';refreshMapPanel(panel);return;}
         const close=clickTarget?.closest('[data-map-close]');
         if(close){panel.querySelector('[data-map-popover]')?.setAttribute('hidden','');return;}
         const expand=clickTarget?.closest('[data-map-expand]');
@@ -593,12 +637,25 @@
         if(!marker)return;
         const publicPage=panel.dataset.mapPublic==='true';
         const result=mapGroups(homeMapNodes(publicPage),state.mapMode);
-        const group=result.groups.find(item=>item.key===marker.dataset.mapKey);
         const surface=panel.querySelector('[data-map-surface]');
         const popover=surface?.querySelector('[data-map-popover]');
-        if(!group||!surface||!popover)return;
-        popover.innerHTML=mapPopoverMarkup(group);
-        popover.hidden=false;
+        if(!surface||!popover)return;
+        const spiderfyGroup=marker.hasAttribute('data-map-spiderfy-marker')?result.groups.find(item=>item.key===marker.dataset.mapKey):null;
+        if(spiderfyGroup){
+          popover.innerHTML=mapPopoverMarkup(spiderfyGroup);
+          popover.hidden=false;
+        }else{
+          const displayGroups=mapScreenClusters(result.groups,surface);
+          const display=displayGroups.find(item=>item.key===marker.dataset.mapKey);
+          if(!display)return;
+          if(display.isCluster){
+            if(state.mapZoom<mapZoomMaximum){mapZoomToCluster(panel,display,surface);}else{state.mapSpiderfyKey=display.key;refreshMapPanel(panel);}
+            return;
+          }
+          const group=display.groups[0]||display;
+          popover.innerHTML=mapPopoverMarkup(group);
+          popover.hidden=false;
+        }
         const markerBox=marker.getBoundingClientRect();
         const surfaceBox=surface.getBoundingClientRect();
         const left=Math.max(12,Math.min(Math.max(12,surfaceBox.width-302),markerBox.left-surfaceBox.left+12));
@@ -606,7 +663,8 @@
         popover.style.left=left+'px';
         popover.style.top=top+'px';
       });
-      panel.addEventListener('keydown',event=>{const marker=event.target.closest('[data-map-key]');if(marker&&(event.key==='Enter'||event.key===' ')){event.preventDefault();marker.dispatchEvent(new MouseEvent('click',{bubbles:true}));}});
+      panel.addEventListener('keydown',event=>{const close=event.target.closest('[data-map-spiderfy-close]');if(close&&(event.key==='Enter'||event.key===' ')){event.preventDefault();close.dispatchEvent(new MouseEvent('click',{bubbles:true}));return;}const marker=event.target.closest('[data-map-key]');if(marker&&(event.key==='Enter'||event.key===' ')){event.preventDefault();marker.dispatchEvent(new MouseEvent('click',{bubbles:true}));}});
+      refreshMapPanel(panel);
     };
     const updateHomeMap = publicPage => { const dashboard=publicPage?state.publicDashboard:state.dashboard; const shouldShow=dashboard?.map_enabled!==false; const page=document.querySelector(publicPage?'.public-page':'.private-page'); const panel=page?.querySelector('[data-map-panel]'); if((shouldShow&&!panel)||(!shouldShow&&panel)){render();return;} if(!panel)return; refreshMapPanel(panel); };
     const api = async (path, options={}) => { const controller=typeof AbortController==='function'?new AbortController():null; const timeout=setTimeout(()=>controller?.abort(),15000); let response; try { response=await fetch(path, {credentials:'same-origin', headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options, ...(controller?{signal:controller.signal}:{})}); } catch (error) { if (error?.name==='AbortError') throw new Error('请求超时，请稍后重试'); throw error; } finally { clearTimeout(timeout); } let body=null; try { body=await response.json(); } catch (_) {} if (!response.ok) { if (response.status===401 && path!=='/api/auth/login') { state.user=null; stopTelemetryStream(); state.showLogin=state.area==='admin'; startAutoRefresh(); } throw new Error(body?.error || response.statusText); } return body; };
