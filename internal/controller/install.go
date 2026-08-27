@@ -139,16 +139,140 @@ if [ -n "$update_signing_key" ]; then
 	printf '%s' "$key_base64" | base64 -d > "$public_key_path"
 	curl -fsS $curl_progress --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$signature_url" -o "$tmpdir/nyasm-node.sha256.sig"
 	verify_node_signature() {
-		# OpenSSL 1.1.1 (for example Debian 11) accepts the fixed-length digest as raw input.
+		# OpenSSL 3 supports Ed25519 through pkeyutl. Older OpenSSL 1.1.1
+		# builds can parse the key but do not implement EVP_PKEY_verify_init.
 		pkeyutl_help="$(openssl pkeyutl -help 2>&1 || true)"
+		openssl_version="$(openssl version 2>&1 || true)"
 		case "$pkeyutl_help" in
 			*-rawin*)
-				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1
-				;;
+				if openssl pkeyutl -verify -pubin -inkey "$public_key_path" -rawin -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1; then
+					return 0
+				fi
+				case "$openssl_version" in
+					OpenSSL\ 1.*|LibreSSL*) ;;
+					*) return 1 ;;
+				esac
+			;;
 			*)
-				openssl pkeyutl -verify -pubin -inkey "$public_key_path" -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1
-				;;
+				if openssl pkeyutl -verify -pubin -inkey "$public_key_path" -in "$tmpdir/nyasm-node.digest" -sigfile "$tmpdir/nyasm-node.sha256.sig" >/dev/null 2>&1; then
+					return 0
+				fi
+			;;
 		esac
+
+		if ! command -v python3 >/dev/null 2>&1; then
+			echo "OpenSSL cannot verify Ed25519 signatures and python3 is not installed" >&2
+			return 1
+		fi
+
+		# Python's standard library has enough primitives for a small, dependency-free
+		# Ed25519 verifier, which keeps signed installs working on Debian 11.
+		if python3 - "$public_key_path" "$tmpdir/nyasm-node.digest" "$tmpdir/nyasm-node.sha256.sig" <<'PY'
+import base64
+import hashlib
+import sys
+
+Q = 2 ** 255 - 19
+L = 2 ** 252 + 27742317777372353535851937790883648493
+D = (-121665 * pow(121666, Q - 2, Q)) % Q
+I = pow(2, (Q - 1) // 4, Q)
+
+
+def inverse(value):
+    return pow(value, Q - 2, Q)
+
+
+def recover_x(y):
+    xx = (y * y - 1) * inverse(D * y * y + 1) % Q
+    x = pow(xx, (Q + 3) // 8, Q)
+    if (x * x - xx) % Q:
+        x = x * I % Q
+    if (x * x - xx) % Q:
+        raise ValueError("invalid Ed25519 point")
+    return Q - x if x & 1 else x
+
+
+def decode_point(encoded):
+    if len(encoded) != 32:
+        raise ValueError("invalid Ed25519 point length")
+    value = int.from_bytes(encoded, "little")
+    y = value & ((1 << 255) - 1)
+    if y >= Q:
+        raise ValueError("non-canonical Ed25519 point")
+    x = recover_x(y)
+    if (x & 1) != (value >> 255):
+        x = Q - x
+    if (-x * x + y * y - 1 - D * x * x * y * y) % Q:
+        raise ValueError("invalid Ed25519 point")
+    return x, y
+
+
+def add(left, right):
+    x1, y1 = left
+    x2, y2 = right
+    return (
+        (x1 * y2 + x2 * y1) * inverse(1 + D * x1 * x2 * y1 * y2) % Q,
+        (y1 * y2 + x1 * x2) * inverse(1 - D * x1 * x2 * y1 * y2) % Q,
+    )
+
+
+def multiply(point, scalar):
+    result = (0, 1)
+    while scalar:
+        if scalar & 1:
+            result = add(result, point)
+        point = add(point, point)
+        scalar >>= 1
+    return result
+
+
+def verify(public_key, message, signature):
+    if len(public_key) != 32 or len(signature) != 64:
+        return False
+    try:
+        r = decode_point(signature[:32])
+        a = decode_point(public_key)
+    except ValueError:
+        return False
+    scalar = int.from_bytes(signature[32:], "little")
+    if scalar >= L:
+        return False
+    challenge = int.from_bytes(
+        hashlib.sha512(signature[:32] + public_key + message).digest(), "little"
+    ) % L
+    base_y = 4 * inverse(5) % Q
+    left = multiply((recover_x(base_y), base_y), scalar)
+    right = add(r, multiply(a, challenge))
+    return multiply(left, 8) == multiply(right, 8)
+
+
+def read_public_key(path):
+    with open(path, "rb") as file:
+        pem = file.read().splitlines()
+    payload = b"".join(line.strip() for line in pem if not line.startswith(b"-"))
+    der = base64.b64decode(payload, validate=True)
+    prefix = bytes.fromhex("302a300506032b6570032100")
+    if len(der) != len(prefix) + 32 or not der.startswith(prefix):
+        raise ValueError("invalid Ed25519 public key")
+    return der[len(prefix):]
+
+
+try:
+    public_key = read_public_key(sys.argv[1])
+    with open(sys.argv[2], "rb") as file:
+        message = file.read()
+    with open(sys.argv[3], "rb") as file:
+        signature = file.read()
+    if len(message) != 64 or not verify(public_key, message, signature):
+        raise ValueError("invalid Ed25519 signature")
+except (OSError, ValueError, IndexError) as error:
+    print("Ed25519 verification failed: %s" % error, file=sys.stderr)
+    sys.exit(1)
+PY
+		then
+			return 0
+		fi
+		return 1
 	}
 	if ! verify_node_signature; then
 		echo "node binary signature verification failed" >&2

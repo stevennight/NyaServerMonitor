@@ -4,13 +4,18 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +43,9 @@ func TestInstallScriptInstallsAndRestartsNodeService(t *testing.T) {
 		"ReadWritePaths=/var/lib/nyasm",
 		"pkeyutl_help=\"$(openssl pkeyutl -help 2>&1 || true)\"",
 		"*-rawin*)",
+		"command -v python3",
+		"dependency-free",
+		"Ed25519 verification failed",
 		"systemctl daemon-reload\nsystemctl enable nyasm-node\nsystemctl restart nyasm-node",
 	} {
 		if !strings.Contains(script, required) {
@@ -49,6 +57,90 @@ func TestInstallScriptInstallsAndRestartsNodeService(t *testing.T) {
 	}
 	if strings.Contains(script, "systemctl enable --now nyasm-node") {
 		t.Fatal("installer must restart an existing node so a rotated token is loaded")
+	}
+}
+
+func TestInstallScriptIsValidPOSIXShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell syntax test is not run on Windows")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not installed")
+	}
+	command := exec.Command(sh, "-n")
+	command.Stdin = strings.NewReader(installScript())
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated install script is invalid: %v\n%s", err, output)
+	}
+}
+
+func TestInstallScriptPythonEd25519Fallback(t *testing.T) {
+	python := ""
+	for _, candidate := range []string{"python3", "python"} {
+		candidatePath, err := exec.LookPath(candidate)
+		if err == nil && exec.Command(candidatePath, "--version").Run() == nil {
+			python = candidatePath
+			break
+		}
+	}
+	if python == "" {
+		t.Skip("python3 is not installed or runnable")
+	}
+
+	script := installScript()
+	marker := "python3 - \"$public_key_path\" \"$tmpdir/nyasm-node.digest\" \"$tmpdir/nyasm-node.sha256.sig\" <<'PY'\n"
+	start := strings.Index(script, marker)
+	if start < 0 {
+		t.Fatal("python fallback is missing from install script")
+	}
+	pythonSourceStart := start + len(marker)
+	end := strings.Index(script[pythonSourceStart:], "\nPY\n")
+	if end < 0 {
+		t.Fatal("python fallback heredoc is not terminated")
+	}
+	pythonSource := script[pythonSourceStart : pythonSourceStart+end]
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	digest := []byte(strings.Repeat("a", 64))
+	signature := ed25519.Sign(privateKey, digest)
+	dir := t.TempDir()
+	publicPath := filepath.Join(dir, "public.pem")
+	digestPath := filepath.Join(dir, "digest")
+	signaturePath := filepath.Join(dir, "signature")
+	if err := os.WriteFile(publicPath, publicPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(digestPath, digest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(signaturePath, signature, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runVerifier := func() ([]byte, error) {
+		command := exec.Command(python, "-", publicPath, digestPath, signaturePath)
+		command.Stdin = strings.NewReader(pythonSource)
+		return command.CombinedOutput()
+	}
+	output, err := runVerifier()
+	if err != nil {
+		t.Fatalf("python Ed25519 fallback failed: %v\n%s", err, output)
+	}
+	signature[0] ^= 1
+	if err := os.WriteFile(signaturePath, signature, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runVerifier(); err == nil {
+		t.Fatalf("python Ed25519 fallback accepted a modified signature:\n%s", output)
 	}
 }
 

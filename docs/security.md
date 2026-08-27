@@ -23,7 +23,7 @@
 
 token 只在创建、显式轮换或管理员请求安装命令的受保护响应中出现，节点列表、节点详情、审计和指标接口不会返回 token。若没有配置 `NYASM_NODE_TOKEN_KEY`，旧节点无法重新生成安装命令，只能显式轮换一次。生产环境必须通过 Caddy、反向代理或直接 HTTPS 暴露主节点，并限制管理面板访问来源。
 
-节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；在普通主机上 systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；检测到 LXC 等容器时，安装器会关闭依赖 mount namespace 的文件系统隔离，但仍保留 `NoNewPrivileges`。更新子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
+节点部署命令只在管理员登录后的创建/安装命令/凭据轮换响应中返回。公开的 `/install.sh`、`/downloads/nyasm-node`、`/downloads/nyasm-node/manifest` 和签名端点不携带节点 token；安装脚本强制远程 controller 使用 HTTPS，仅允许 localhost 使用 HTTP，并将 token 写入权限为 `0600` 的 `/etc/nyasm/node.env`。安装时会在存在签名公钥时验证初始二进制；OpenSSL 3 使用 `pkeyutl`，无法通过 Ed25519 验签的旧 OpenSSL 使用系统 `python3` 标准库 fallback，仍不会跳过签名校验。在普通主机上 systemd 主服务启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome` 和 `PrivateTmp`，更新器只调用固定的 node update 子命令；检测到 LXC 等容器时，安装器会关闭依赖 mount namespace 的文件系统隔离，但仍保留 `NoNewPrivileges`。更新子命令只会调用固定的 `systemctl restart nyasm-node`，不解析或执行来自 controller 的命令。旧数据库只有 token 哈希，无法恢复旧 token；需要重新部署时必须显式轮换一次。
 
 ## 公开状态页
 
