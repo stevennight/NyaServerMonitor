@@ -354,6 +354,56 @@
       .map-surface .map-mode-option{padding:4px 7px}
     }
   </style>
+  <style>
+    .service-check-section{margin-top:26px;padding-top:22px;border-top:1px solid var(--line)}
+    .service-check-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+    .service-check-heading h4{margin:0;font-size:15px}
+    .service-check-heading p{margin:3px 0 0;color:var(--muted);font-size:12px}
+    .service-check-list{display:grid;gap:1px}
+    .service-check-row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1.4fr) auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(43,57,64,.65)}
+    .service-check-row:last-child{border-bottom:0}
+    .service-check-identity{min-width:0}
+    .service-check-name{display:block;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-check-target{display:block;margin-top:3px;color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-check-result{display:flex;align-items:center;gap:8px;min-width:0}
+    .service-check-result .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-check-type{min-width:48px;text-align:right;text-transform:uppercase;color:var(--muted);font-size:11px}
+    .service-history{margin-top:24px;padding-top:22px;border-top:1px solid var(--line)}
+    .service-history-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .service-history-head h4{margin:0;font-size:15px}
+    .service-history-head p{margin:3px 0 0;color:var(--muted);font-size:12px}
+    .service-check-selector{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;max-width:62%}
+    .service-check-option{display:flex;align-items:center;gap:7px;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--theme-subtle-surface);color:var(--muted);font-size:11px;cursor:pointer}
+    .service-check-option:has(input:checked){border-color:var(--blue);color:var(--text);background:rgba(109,181,223,.08)}
+    .service-check-option input{margin:0;accent-color:var(--green)}
+    .service-check-option span{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-check-chart-host{margin-top:15px;min-height:286px}
+    .service-chart-kpis{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:8px;color:var(--muted);font-size:11px}
+    .service-chart-kpis strong{margin-left:5px;color:var(--text);font-size:13px;font-variant-numeric:tabular-nums}
+    .service-chart-wrap{width:100%;overflow-x:auto;overflow-y:hidden}
+    .service-chart-svg{display:block;width:100%;min-width:620px;height:238px}
+    .service-chart-grid{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4;vector-effect:non-scaling-stroke}
+    .service-chart-axis{fill:var(--muted);font-size:10px}
+    .service-chart-line{fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+    .service-chart-quality{fill:none;stroke:var(--yellow);stroke-width:1.8;stroke-dasharray:5 4;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+    .service-chart-point{stroke-width:1.8;vector-effect:non-scaling-stroke}
+    .service-chart-point-failed{fill:var(--red)!important;stroke:var(--red)!important}
+    .service-chart-quality-point{fill:var(--panel);stroke:var(--yellow);stroke-width:1.5;vector-effect:non-scaling-stroke}
+    .service-chart-legend{display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:4px;color:var(--muted);font-size:11px}
+    .service-chart-legend-item{display:inline-flex;align-items:center;gap:6px}
+    .service-chart-swatch{width:18px;height:3px;border-radius:2px;background:var(--blue)}
+    .service-chart-swatch.quality{height:0;border-top:2px dashed var(--yellow);background:transparent}
+    .service-chart-empty{min-height:260px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:var(--muted)}
+    @media(max-width:700px){
+      .service-check-heading,.service-history-head{display:block}
+      .service-check-selector{justify-content:flex-start;max-width:none;margin-top:12px}
+      .service-check-option{flex:1 1 140px}
+      .service-check-row{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px}
+      .service-check-result{grid-column:1/-1}
+      .service-check-type{grid-column:2;grid-row:1}
+      .service-check-chart-host{min-height:300px}
+    }
+  </style>
 </head>
 <body>
   <div id="root"></div>
@@ -1107,6 +1157,125 @@
       const publicHistoryMarkup = samples => `${detailHistoryCard('CPU', samples, sample => sample.cpu_percent || 0, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('内存', samples, sample => sample.memory_percent || 0, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('磁盘', samples, sample => sample.disk_percent || 0, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('负载 1m', samples, sample => sample.load1 || 0, value => Number(value).toFixed(2))}${detailHistoryCard('网络入站速率', publicNetworkRateSamples(samples, 'in'), sample => sample.network_rate || 0, value => formatBytes(value) + '/s')}${detailHistoryCard('网络出站速率', publicNetworkRateSamples(samples, 'out'), sample => sample.network_rate || 0, value => formatBytes(value) + '/s')}`;
       const publicNetworkRateSamples = (samples, direction) => { const list = samples || []; const key = direction === 'in' ? 'network_in_bytes' : 'network_out_bytes'; const liveKey = direction === 'in' ? 'network_in_rate' : 'network_out_rate'; return list.map((sample, index) => { if (Number.isFinite(Number(sample[liveKey]))) return { ...sample, network_rate: Number(sample[liveKey]) }; const previous = list[index - 1]; if (!previous) return { ...sample, network_rate: 0 }; const current = Number(sample[key] || 0); const prior = Number(previous[key] || 0); const elapsed = (new Date(sample.observed_at).getTime() - new Date(previous.observed_at).getTime()) / 1000; return { ...sample, network_rate: elapsed > 0 && current >= prior ? (current - prior) / elapsed : 0 }; }); };
       const adminDetailMarkup = (node, samples) => { const memoryValue = sample => Number(sample.metrics?.memory_total_bytes || 0) ? Number(sample.metrics.memory_used_bytes || 0) / Number(sample.metrics.memory_total_bytes) * 100 : 0; const networkValue = sample => (sample.metrics?.networks || []).reduce((total, item) => total + Number(item.bytes_in || 0) + Number(item.bytes_out || 0), 0); const diskValue = sample => { const disks = sample.metrics?.disks || []; const total = disks.reduce((sum, disk) => sum + Number(disk.total_bytes || 0), 0); const used = disks.reduce((sum, disk) => sum + Number(disk.used_bytes || 0), 0); return total ? used / total * 100 : 0; }; const checks = node.checks?.length ? node.checks.map(check => { const detail = check.type === 'ping' ? `${Number(check.latency_ms || 0)} ms · 丢包 ${Number(check.packet_loss_percent || 0).toFixed(1)}%` : check.type === 'tls' ? `${check.tls_expires_at_unix ? new Date(Number(check.tls_expires_at_unix) * 1000).toLocaleString() : '无到期时间'} · ${escapeChartText(check.tls_version || 'TLS')}` : check.status === 'up' ? `${Number(check.latency_ms || 0)} ms` : escapeChartText(check.message || 'down'); return `<div class="metric-row"><span>${escapeChartText(check.name)}</span><span class="check-status-line">${detailStatusBadge(check.status === 'up' ? 'online' : check.status === 'unknown' ? 'pending' : 'offline')}<span class="mono">${detail}</span></span><span class="mono">${escapeChartText(check.type)}</span></div>`; }).join('') : '<div class="muted" style="margin-top:8px">该节点未配置本地检查。</div>'; const id = escapeChartText(node.id); return `<div class="node-detail"><div class="actions detail-actions"><label class="filter-select">范围<select id="metric-range"><option value="1">1 小时</option><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="168">7 天</option><option value="720">30 天</option></select></label><button class="btn small" id="edit-node">编辑信息</button><button class="btn small primary" id="install-node"${node.status === 'revoked' ? ' disabled' : ''}>生成安装命令</button><button class="btn small" id="update-node"${node.status === 'revoked' ? ' disabled' : ''}>下发更新</button><button class="btn small" id="rotate-token">轮换凭据</button>${node.status === 'revoked' ? '<button class="btn small" id="restore-node">恢复</button>' : '<button class="btn small danger" id="revoke-node">撤销</button>'}</div><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${id}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${escapeChartText(node.system?.hostname || '未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${escapeChartText([node.system?.os, node.system?.arch].filter(Boolean).join(' / ') || '--')}</div></div><div><div class="meta-label">展示 IP${node.ip_override ? ' · 手动' : ''}</div><div class="meta-value mono">${escapeChartText(node.ip_override || node.public_ipv4 || node.public_ipv6 || '--')}</div></div><div><div class="meta-label">出口 IPv4 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv4 || '--')}</div></div><div><div class="meta-label">出口 IPv6 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv6 || '--')}</div></div><div><div class="meta-label">本机网卡 IP</div><div class="meta-value mono">${escapeChartText(node.system?.ip || '--')}</div></div><div><div class="meta-label">国家/地区${node.country_override ? ' · 手动' : ''}</div><div class="meta-value">${detailCountryMarkup(node)}</div></div><div><div class="meta-label">状态</div><div class="meta-value">${detailStatusBadge(node.status)}</div></div></div><div class="history-grid">${detailHistoryCard('CPU', samples, sample => sample.metrics?.cpu_percent || 0, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('内存', samples, memoryValue, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('磁盘', samples, diskValue, value => Number(value).toFixed(1) + '%')}${detailHistoryCard('负载 1m', samples, sample => sample.metrics?.load1 || 0, value => Number(value).toFixed(2))}${detailHistoryCard('网络累计流量', samples, networkValue, value => formatBytes(value))}</div><div style="margin-top:22px"><div class="meta-label">服务检查</div>${checks}</div></div>`; };
+      const serviceChartTypes = new Set(['http', 'tcp', 'ping']);
+      const serviceChartPalette = ['#49d18d', '#6db5df', '#e7b94e', '#ef7070', '#67c7c0', '#d89bd8', '#9cb86c', '#e19a66'];
+      const serviceCheckKey = check => String(check?.id || [check?.type, check?.target, check?.name].filter(Boolean).join(':'));
+      const serviceCheckDefinitions = (node, samples) => {
+        const checks = new Map();
+        const add = check => {
+          if (!serviceChartTypes.has(check?.type)) return;
+          const id = serviceCheckKey(check);
+          if (!id) return;
+          const existing = checks.get(id) || {};
+          checks.set(id, {
+            ...existing,
+            ...check,
+            id,
+            name: check.name || existing.name || id,
+            type: check.type || existing.type || '',
+            target: check.target || existing.target || ''
+          });
+        };
+        (node?.checks || []).forEach(add);
+        (samples || []).forEach(sample => (sample?.checks || []).forEach(add));
+        return Array.from(checks.values());
+      };
+      const normalizeServiceCheckSelection = (definitions, selectedIDs) => {
+        const available = new Set(definitions.map(check => check.id));
+        const selected = Array.from(new Set((selectedIDs || []).map(String))).filter(id => available.has(id));
+        return selected.length ? selected : definitions.slice(0, 1).map(check => check.id);
+      };
+      const serviceCheckAt = (sample, id) => (sample?.checks || []).find(check => serviceCheckKey(check) === id);
+      const serviceCheckTypeLabel = type => ({ http: 'HTTP', tcp: 'TCP', ping: 'PING', tls: 'TLS' }[type] || String(type || '').toUpperCase());
+      const serviceCheckResultText = check => {
+        const latency = `${Number(check?.latency_ms || 0)} ms`;
+        if (check?.type === 'ping') return `${latency} · 丢包 ${Number(check.packet_loss_percent || 0).toFixed(1)}%`;
+        if (check?.type === 'tls') return `${check.tls_expires_at_unix ? new Date(Number(check.tls_expires_at_unix) * 1000).toLocaleString() : '无到期时间'} · ${check.tls_version || 'TLS'}`;
+        return check?.status === 'up' ? latency : `${latency} · ${check?.message || '探测失败'}`;
+      };
+      const serviceCheckRowsMarkup = node => {
+        if (!node?.checks?.length) return '<div class="muted" style="margin-top:8px">该节点未配置本地检查。</div>';
+        return `<div class="service-check-list">${node.checks.map(check => `<div class="service-check-row"><div class="service-check-identity"><span class="service-check-name">${escapeChartText(check.name)}</span><span class="service-check-target mono" title="${escapeChartText(check.target)}">${escapeChartText(check.target)}</span></div><div class="service-check-result">${detailStatusBadge(check.status === 'up' ? 'online' : check.status === 'unknown' ? 'pending' : 'offline')}<span class="mono" title="${escapeChartText(check.message || '')}">${escapeChartText(serviceCheckResultText(check))}</span></div><span class="service-check-type">${escapeChartText(serviceCheckTypeLabel(check.type))}</span></div>`).join('')}</div>`;
+      };
+      const serviceChartTimeLabel = (sample, longRange) => {
+        const date = new Date(sample?.observed_at);
+        if (!Number.isFinite(date.getTime())) return '--';
+        const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        return longRange ? `${date.getMonth() + 1}/${date.getDate()} ${time}` : time;
+      };
+      const serviceCheckHistoryChart = (node, samples, selectedIDs) => {
+        const definitions = serviceCheckDefinitions(node, samples);
+        const selection = normalizeServiceCheckSelection(definitions, selectedIDs);
+        const selected = selection.map(id => definitions.find(check => check.id === id)).filter(Boolean);
+        if (!selected.length) return '<div class="service-chart-empty">暂无可绘制的 HTTP、TCP 或 Ping 历史数据</div>';
+        const source = (samples || []).filter(sample => selected.some(check => serviceCheckAt(sample, check.id)));
+        if (!source.length) return '<div class="service-chart-empty">当前时间范围内暂无服务检查数据</div>';
+        const limit = 180;
+        const visible = source.length <= limit ? source : Array.from({ length: limit }, (_, index) => source[Math.round(index * (source.length - 1) / (limit - 1))]);
+        const width = 900;
+        const height = 238;
+        const left = 52;
+        const right = selected.length === 1 ? 52 : 16;
+        const top = 14;
+        const bottom = 32;
+        const plotWidth = width - left - right;
+        const plotHeight = height - top - bottom;
+        const pointX = index => visible.length === 1 ? left + plotWidth / 2 : left + index / (visible.length - 1) * plotWidth;
+        const latencyValues = selected.flatMap(check => visible.map(sample => serviceCheckAt(sample, check.id)).filter(Boolean).map(item => Number(item.latency_ms || 0))).filter(Number.isFinite);
+        const latencyMax = Math.max(10, Math.ceil(Math.max(...latencyValues, 0) * 1.1));
+        const latencyY = value => top + (latencyMax - Math.min(latencyMax, Math.max(0, value))) / latencyMax * plotHeight;
+        const qualityY = value => top + (100 - Math.min(100, Math.max(0, value))) / 100 * plotHeight;
+        const gridValues = [latencyMax, latencyMax / 2, 0];
+        const grid = gridValues.map(value => { const y = latencyY(value); return `<line class="service-chart-grid" x1="${left}" y1="${y.toFixed(2)}" x2="${width - right}" y2="${y.toFixed(2)}"></line><text class="service-chart-axis" x="${left - 8}" y="${(y + 3).toFixed(2)}" text-anchor="end">${escapeChartText(Math.round(value) + ' ms')}</text>`; }).join('');
+        const longRange = new Date(visible[visible.length - 1].observed_at).getTime() - new Date(visible[0].observed_at).getTime() > 36 * 60 * 60 * 1000;
+        const labelIndexes = [0, Math.floor((visible.length - 1) / 2), visible.length - 1].filter((index, position, all) => all.indexOf(index) === position);
+        const timeLabels = labelIndexes.map(index => `<text class="service-chart-axis" x="${pointX(index).toFixed(2)}" y="${height - 7}" text-anchor="middle">${escapeChartText(serviceChartTimeLabel(visible[index], longRange))}</text>`).join('');
+        const lines = selected.map((definition, seriesIndex) => {
+          const color = serviceChartPalette[seriesIndex % serviceChartPalette.length];
+          const points = visible.map((sample, index) => { const check = serviceCheckAt(sample, definition.id); return check ? { check, sample, x: pointX(index), y: latencyY(Number(check.latency_ms || 0)) } : null; }).filter(Boolean);
+          if (!points.length) return '';
+          const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+          const circles = points.map(point => { const failed = point.check.status !== 'up'; const timestamp = new Date(point.sample.observed_at).toLocaleString(); const title = `${timestamp} · ${definition.name} · ${Number(point.check.latency_ms || 0)} ms${failed ? ` · ${point.check.message || '探测失败'}` : ''}`; return `<circle class="service-chart-point${failed ? ' service-chart-point-failed' : ''}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.7" fill="var(--panel)" stroke="${color}"><title>${escapeChartText(title)}</title></circle>`; }).join('');
+          return `<path class="service-chart-line" d="${path}" stroke="${color}"></path>${circles}`;
+        }).join('');
+        let quality = '';
+        let rightAxis = '';
+        if (selected.length === 1) {
+          const definition = selected[0];
+          const points = visible.map((sample, index) => {
+            const check = serviceCheckAt(sample, definition.id);
+            if (!check) return null;
+            const value = definition.type === 'ping' ? Number(check.packet_loss_percent || 0) : check.status === 'up' ? 0 : 100;
+            return { check, sample, value, x: pointX(index), y: qualityY(value) };
+          }).filter(Boolean);
+          if (points.length) {
+            const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+            const circles = points.map(point => `<circle class="service-chart-quality-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.2"><title>${escapeChartText(`${new Date(point.sample.observed_at).toLocaleString()} · ${definition.type === 'ping' ? '丢包' : '探测失败'} ${point.value.toFixed(1)}%`)}</title></circle>`).join('');
+            quality = `<path class="service-chart-quality" d="${path}"></path>${circles}`;
+            rightAxis = [100, 50, 0].map(value => { const y = qualityY(value); return `<text class="service-chart-axis" x="${width - right + 8}" y="${(y + 3).toFixed(2)}" text-anchor="start">${value}%</text>`; }).join('');
+          }
+        }
+        const legend = selected.map((check, index) => `<span class="service-chart-legend-item"><span class="service-chart-swatch" style="background:${serviceChartPalette[index % serviceChartPalette.length]}"></span>${escapeChartText(check.name)} · ${escapeChartText(serviceCheckTypeLabel(check.type))}</span>`).join('');
+        const qualityLegend = selected.length === 1 ? `<span class="service-chart-legend-item"><span class="service-chart-swatch quality"></span>${selected[0].type === 'ping' ? '丢包率' : '探测失败'}</span>` : '';
+        const selectedPoints = visible.map(sample => serviceCheckAt(sample, selected[0].id)).filter(Boolean);
+        const successful = selectedPoints.filter(check => check.status === 'up');
+        const averageSource = successful.length ? successful : selectedPoints;
+        const averageLatency = averageSource.length ? averageSource.reduce((sum, check) => sum + Number(check.latency_ms || 0), 0) / averageSource.length : 0;
+        const availability = selectedPoints.length ? successful.length / selectedPoints.length * 100 : 0;
+        const singleKPIs = selected.length === 1 ? `<span>平均耗时<strong>${averageLatency.toFixed(1)} ms</strong></span><span>可用率<strong>${availability.toFixed(1)}%</strong></span>${selected[0].type === 'ping' ? `<span>平均丢包<strong>${(selectedPoints.reduce((sum, check) => sum + Number(check.packet_loss_percent || 0), 0) / Math.max(1, selectedPoints.length)).toFixed(1)}%</strong></span>` : `<span>失败次数<strong>${selectedPoints.length - successful.length}</strong></span>`}` : `<span>对比检查<strong>${selected.length}</strong></span><span>历史采样<strong>${visible.length}</strong></span>`;
+        return `<div class="service-chart-kpis">${singleKPIs}</div><div class="service-chart-wrap"><svg class="service-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="服务检查耗时与质量历史图表"><g>${grid}${timeLabels}${rightAxis}</g><g>${lines}${quality}</g></svg></div><div class="service-chart-legend">${legend}${qualityLegend}</div>`;
+      };
+      const serviceCheckHistoryMarkup = (node, samples, selectedIDs) => {
+        const definitions = serviceCheckDefinitions(node, samples);
+        if (!definitions.length) return '';
+        const selection = normalizeServiceCheckSelection(definitions, selectedIDs);
+        const options = definitions.map(check => `<label class="service-check-option" title="${escapeChartText(check.target)}"><input type="checkbox" data-service-check-id="${escapeChartText(check.id)}"${selection.includes(check.id) ? ' checked' : ''}><span>${escapeChartText(check.name)}</span></label>`).join('');
+        return `<section class="service-history"><div class="service-history-head"><div><h4>服务检查历史</h4><p>单选显示耗时与丢包/失败，多选比较各检查耗时。</p></div><div class="service-check-selector" role="group" aria-label="选择服务检查">${options}</div></div><div class="service-check-chart-host">${serviceCheckHistoryChart(node, samples, selection)}</div></section>`;
+      };
+      const enhancedAdminDetailMarkup = (node, samples, selectedIDs) => {
+        const id = escapeChartText(node.id);
+        return `<div class="node-detail"><div class="actions detail-actions"><label class="filter-select">范围<select id="metric-range"><option value="1">1 小时</option><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="168">7 天</option><option value="720">30 天</option></select></label><button class="btn small" id="edit-node">编辑信息</button><button class="btn small primary" id="install-node"${node.status === 'revoked' ? ' disabled' : ''}>生成安装命令</button><button class="btn small" id="update-node"${node.status === 'revoked' ? ' disabled' : ''}>下发更新</button><button class="btn small" id="rotate-token">轮换凭据</button>${node.status === 'revoked' ? '<button class="btn small" id="restore-node">恢复</button>' : '<button class="btn small danger" id="revoke-node">撤销</button>'}</div><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${id}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${escapeChartText(node.system?.hostname || '未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${escapeChartText([node.system?.os, node.system?.arch].filter(Boolean).join(' / ') || '--')}</div></div><div><div class="meta-label">展示 IP${node.ip_override ? ' · 手动' : ''}</div><div class="meta-value mono">${escapeChartText(node.ip_override || node.public_ipv4 || node.public_ipv6 || '--')}</div></div><div><div class="meta-label">出口 IPv4 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv4 || '--')}</div></div><div><div class="meta-label">出口 IPv6 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv6 || '--')}</div></div><div><div class="meta-label">本机网卡 IP</div><div class="meta-value mono">${escapeChartText(node.system?.ip || '--')}</div></div><div><div class="meta-label">国家/地区${node.country_override ? ' · 手动' : ''}</div><div class="meta-value">${detailCountryMarkup(node)}</div></div><div><div class="meta-label">状态</div><div class="meta-value">${detailStatusBadge(node.status)}</div></div></div><div class="history-grid">${adminHistoryMarkup(samples)}</div><section class="service-check-section"><div class="service-check-heading"><div><h4>当前服务检查</h4><p>目标地址仅在管理员视图展示。</p></div></div>${serviceCheckRowsMarkup(node)}</section>${serviceCheckHistoryMarkup(node, samples, selectedIDs)}</div>`;
+      };
       const publicDetailMarkup = (node, samples) => {
         const tags = (node.tags || []).map(tag => `<span class="public-node-tag">${escapeChartText(tag)}</span>`).join('');
         const checks = node.checks_total ? `${node.checks_up}/${node.checks_total} 正常` : '未配置';
@@ -1178,7 +1347,7 @@
         const observedAt = Number(data.observed_at_unix_milli);
         if (!Number.isFinite(observedAt) || observedAt <= 0) return null;
         const observedAtISO = new Date(observedAt).toISOString();
-        if (admin) return { observed_at: observedAtISO, sequence: data.sequence, metrics: data.metrics || { networks: [] }, checks: [] };
+        if (admin) return { observed_at: observedAtISO, sequence: data.sequence, metrics: data.metrics || { networks: [] } };
         const rates = (data.networks || []).reduce((total, network) => ({
           in: total.in + Number(network.bytes_in_per_second || 0),
           out: total.out + Number(network.bytes_out_per_second || 0)
@@ -1190,6 +1359,31 @@
         const chart = activeDetail.body.querySelector(activeDetail.admin ? '.history-grid' : '.public-detail-charts');
         if (!chart) return;
         chart.innerHTML = activeDetail.admin ? adminHistoryMarkup(activeDetail.samples) : publicHistoryMarkup(activeDetail.samples);
+        if (activeDetail.admin) {
+          const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
+          if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, activeDetail.selectedCheckIDs);
+        }
+      };
+      const bindServiceCheckControls = () => {
+        if (!activeDetail?.admin) return;
+        const inputs = Array.from(activeDetail.body.querySelectorAll('[data-service-check-id]'));
+        inputs.forEach(input => {
+          input.onchange = () => {
+            const selected = inputs.filter(item => item.checked).map(item => item.dataset.serviceCheckId);
+            if (!selected.length) {
+              input.checked = true;
+              return;
+            }
+            if (selected.length > 6) {
+              input.checked = false;
+              toast('最多同时比较 6 个服务检查', true);
+              return;
+            }
+            activeDetail.selectedCheckIDs = selected;
+            const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
+            if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, selected);
+          };
+        });
       };
       window.nyasmUpdateDetailSamples = (samples, resolutionSeconds) => {
         if (!activeDetail?.admin) return;
@@ -1236,12 +1430,13 @@
         backdrop.onclick = event => { if (event.target === backdrop) close(); };
         const body = modal.querySelector('.node-detail-modal-body');
         const load = async hours => {
+          const previousSelection = activeDetail?.nodeID === node.id ? activeDetail.selectedCheckIDs : null;
           body.innerHTML = '<div class="empty">正在加载历史指标...</div>';
           try {
             const path = admin ? '/api/nodes/' + encodeURIComponent(node.id) + '/metrics?hours=' + hours + '&limit=2000' : '/api/public/nodes/' + encodeURIComponent(node.id) + '/metrics?hours=' + hours + '&limit=500';
             const result = await request(path);
             if (serial !== detailModalSerial) return;
-            body.innerHTML = admin ? adminDetailMarkup(node, result?.samples || []) : publicDetailMarkup(node, result?.samples || []);
+            body.innerHTML = admin ? enhancedAdminDetailMarkup(node, result?.samples || [], previousSelection) : publicDetailMarkup(node, result?.samples || []);
             if (admin) {
               const chart=body.querySelector('.history-grid');
               if (chart) chart.innerHTML=adminHistoryMarkup(result?.samples || []);
@@ -1251,8 +1446,11 @@
               const meta=body.querySelector('.public-detail-meta');
               if (meta) meta.insertAdjacentHTML('beforeend',publicDetailExtraMarkup(node));
             }
-            activeDetail = { serial, nodeID: node.id, admin, body, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples: trimDetailSamples(result?.samples || []) };
+            const samples = trimDetailSamples(result?.samples || []);
+            const definitions = admin ? serviceCheckDefinitions(node, samples) : [];
+            activeDetail = { serial, nodeID: node.id, node, admin, body, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples, selectedCheckIDs: normalizeServiceCheckSelection(definitions, previousSelection) };
             if (admin) {
+              bindServiceCheckControls();
               const range = body.querySelector('#metric-range');
               if (range) { range.value = String(hours); range.onchange = () => load(Number(range.value) || 24); }
               const rotate = body.querySelector('#rotate-token');

@@ -3,6 +3,7 @@ package node
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadChecksRejectsUnknownTypes(t *testing.T) {
@@ -36,5 +37,14 @@ func TestLoadChecksAcceptsTLSChecks(t *testing.T) {
 	}
 	if _, err := loadChecks(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServiceCheckLatencyPreservesPingAverage(t *testing.T) {
+	if got := serviceCheckLatency("ping", 18, 75*time.Millisecond); got != 18 {
+		t.Fatalf("ping latency = %d, want measured average 18", got)
+	}
+	if got := serviceCheckLatency("http", 18, 75*time.Millisecond); got != 75 {
+		t.Fatalf("http latency = %d, want elapsed duration 75", got)
 	}
 }

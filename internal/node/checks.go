@@ -174,7 +174,7 @@ func runCheck(parent context.Context, config CheckConfig) model.ServiceCheck {
 		result.TLSFingerprint = tlsResult.Fingerprint
 		result.TLSVersion = tlsResult.Version
 	}
-	result.LatencyMS = time.Since(started).Milliseconds()
+	result.LatencyMS = serviceCheckLatency(config.Type, result.LatencyMS, time.Since(started))
 	if err != nil {
 		result.Status = "down"
 		result.Message = trimMessage(err.Error())
@@ -182,6 +182,13 @@ func runCheck(parent context.Context, config CheckConfig) model.ServiceCheck {
 		result.Status = "up"
 	}
 	return result
+}
+
+func serviceCheckLatency(checkType string, measured int64, elapsed time.Duration) int64 {
+	if checkType == "ping" {
+		return measured
+	}
+	return elapsed.Milliseconds()
 }
 
 func checkHTTP(ctx context.Context, config CheckConfig) error {
