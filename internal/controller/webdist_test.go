@@ -21,11 +21,14 @@ func TestAdminServiceCheckHistoryUIIsEmbedded(t *testing.T) {
 		"service-check-target",
 		"showsPacketLoss = selected.length === 1 && selected[0].type === 'ping'",
 		"HTTP/TCP 失败点标红",
-		"最多同时比较 6 个服务检查",
+		"return selected.length ? selected : definitions.map(check => check.id)",
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("admin service-check history UI is missing %q", required)
 		}
+	}
+	if strings.Contains(page, "最多同时比较 6 个服务检查") {
+		t.Fatal("service-check history UI still limits the default all-selection")
 	}
 }
 

@@ -1211,7 +1211,7 @@
       const normalizeServiceCheckSelection = (definitions, selectedIDs) => {
         const available = new Set(definitions.map(check => check.id));
         const selected = Array.from(new Set((selectedIDs || []).map(String))).filter(id => available.has(id));
-        return selected.length ? selected : definitions.slice(0, 1).map(check => check.id);
+        return selected.length ? selected : definitions.map(check => check.id);
       };
       const serviceCheckAt = (sample, id) => (sample?.checks || []).find(check => serviceCheckKey(check) === id);
       const serviceCheckTypeLabel = type => ({ http: 'HTTP', tcp: 'TCP', ping: 'PING', tls: 'TLS' }[type] || String(type || '').toUpperCase());
@@ -1533,11 +1533,6 @@
             const selected = inputs.filter(item => item.checked).map(item => item.dataset.serviceCheckId);
             if (!selected.length) {
               input.checked = true;
-              return;
-            }
-            if (selected.length > 6) {
-              input.checked = false;
-              window.nyasmToast?.('最多同时比较 6 个服务检查', true);
               return;
             }
             activeDetail.selectedCheckIDs = selected;
