@@ -60,3 +60,21 @@ func TestNodeDetailChartsAndRefreshUIAreEmbedded(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicServiceCheckHistoryUIIsEmbedded(t *testing.T) {
+	data, err := webFiles.ReadFile("webdist/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(data)
+	for _, required := range []string{
+		"public-service-history-host",
+		"serviceCheckHistoryMarkup(currentNode, result?.samples || [], previousSelection)",
+		"const definitions = serviceCheckDefinitions(currentNode, samples)",
+		"window.nyasmReplaceStoredNode?.(node)",
+	} {
+		if !strings.Contains(page, required) {
+			t.Fatalf("public service-check history UI is missing %q", required)
+		}
+	}
+}

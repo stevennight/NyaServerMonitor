@@ -785,6 +785,8 @@
     const updateHomeMap = publicPage => { const dashboard=publicPage?state.publicDashboard:state.dashboard; const shouldShow=dashboard?.map_enabled!==false; const page=document.querySelector(publicPage?'.public-page':'.private-page'); const panel=page?.querySelector('[data-map-panel]'); if((shouldShow&&!panel)||(!shouldShow&&panel)){render();return;} if(!panel)return; refreshMapPanel(panel); };
     const api = async (path, options={}) => { const controller=typeof AbortController==='function'?new AbortController():null; const timeout=setTimeout(()=>controller?.abort(),15000); let response; try { response=await fetch(path, {credentials:'same-origin', headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options, ...(controller?{signal:controller.signal}:{})}); } catch (error) { if (error?.name==='AbortError') throw new Error('请求超时，请稍后重试'); throw error; } finally { clearTimeout(timeout); } let body=null; try { body=await response.json(); } catch (_) {} if (!response.ok) { if (response.status===401 && path!=='/api/auth/login') { state.user=null; stopTelemetryStream(); state.showLogin=state.area==='admin'; startAutoRefresh(); } throw new Error(body?.error || response.statusText); } return body; };
     const toast = (message, error=false) => { const el=document.createElement('div'); el.className='toast'+(error?' error':''); el.textContent=message; document.body.appendChild(el); setTimeout(()=>el.remove(),3200); };
+    window.nyasmToast = toast;
+    window.nyasmReplaceStoredNode = node => { const replace = nodes => { const index=(nodes||[]).findIndex(item=>item.id===node.id); if(index>=0)nodes[index]=node; }; replace(state.nodes); replace(state.dashboard?.nodes); if(state.selected?.id===node.id)state.selected=node; };
     const setBusy = value => { state.busy=value; document.querySelectorAll('button').forEach(b=>b.disabled=value); };
     function startAutoRefresh(){if(state.refreshTimer)clearInterval(state.refreshTimer);state.refreshTimer=setInterval(()=>{if(!state.autoRefresh||state.busy)return;if(state.user)refresh();else refreshPublic();},30000);}
     function stopTelemetryStream(){if(state.telemetrySource){state.telemetrySource.close();state.telemetrySource=null;}}
@@ -1519,14 +1521,12 @@
         const chart = activeDetail.body.querySelector(activeDetail.admin ? '.history-grid' : '.public-detail-charts');
         if (!chart) return;
         chart.innerHTML = activeDetail.admin ? adminHistoryMarkup(activeDetail.samples) : publicHistoryMarkup(activeDetail.samples);
-        if (activeDetail.admin) {
-          const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
-          if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, activeDetail.selectedCheckIDs);
-        }
+        const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
+        if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, activeDetail.selectedCheckIDs);
         bindChartInteractions(activeDetail.body);
       };
       const bindServiceCheckControls = () => {
-        if (!activeDetail?.admin) return;
+        if (!activeDetail) return;
         const inputs = Array.from(activeDetail.body.querySelectorAll('[data-service-check-id]'));
         inputs.forEach(input => {
           input.onchange = () => {
@@ -1537,7 +1537,7 @@
             }
             if (selected.length > 6) {
               input.checked = false;
-              toast('最多同时比较 6 个服务检查', true);
+              window.nyasmToast?.('最多同时比较 6 个服务检查', true);
               return;
             }
             activeDetail.selectedCheckIDs = selected;
@@ -1550,13 +1550,7 @@
         });
       };
       const replaceStoredNode = node => {
-        const replace = nodes => {
-          const index = (nodes || []).findIndex(item => item.id === node.id);
-          if (index >= 0) nodes[index] = node;
-        };
-        replace(state.nodes);
-        replace(state.dashboard?.nodes);
-        if (state.selected?.id === node.id) state.selected = node;
+        window.nyasmReplaceStoredNode?.(node);
       };
       const refreshAdminDetail = async () => {
         const detail = activeDetail;
@@ -1666,15 +1660,17 @@
             } else {
               const meta=body.querySelector('.public-detail-meta');
               if (meta) meta.insertAdjacentHTML('beforeend',publicDetailExtraMarkup(currentNode));
+              const detailRoot=body.querySelector('.public-detail');
+              if (detailRoot) detailRoot.insertAdjacentHTML('beforeend',`<div class="service-history-host public-service-history-host">${serviceCheckHistoryMarkup(currentNode, result?.samples || [], previousSelection)}</div>`);
             }
             const samples = trimDetailSamples(result?.samples || []);
-            const definitions = admin ? serviceCheckDefinitions(currentNode, samples) : [];
+            const definitions = serviceCheckDefinitions(currentNode, samples);
             activeDetail = { serial, nodeID: node.id, node: currentNode, admin, body, hours, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples, selectedCheckIDs: normalizeServiceCheckSelection(definitions, previousSelection) };
             bindChartInteractions(body);
+            bindServiceCheckControls();
             const currentTitle = modal.querySelector('.modal-head h3');
             if (currentTitle) currentTitle.textContent = currentNode.name;
             if (admin) {
-              bindServiceCheckControls();
               const range = body.querySelector('#metric-range');
               if (range) { range.value = String(hours); range.onchange = () => load(Number(range.value) || 24); }
               const rotate = body.querySelector('#rotate-token');

@@ -337,12 +337,22 @@ type GeoLocation struct {
 	Longitude   float64 `json:"longitude,omitempty"`
 }
 
+type PublicServiceCheck struct {
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Type              string  `json:"type"`
+	Status            string  `json:"status"`
+	LatencyMS         int64   `json:"latency_ms,omitempty"`
+	PacketLossPercent float64 `json:"packet_loss_percent,omitempty"`
+}
+
 type PublicMetricSample struct {
-	ObservedAt      time.Time `json:"observed_at"`
-	CPUPercent      float64   `json:"cpu_percent"`
-	MemoryPercent   float64   `json:"memory_percent"`
-	DiskPercent     float64   `json:"disk_percent"`
-	Load1           float64   `json:"load1"`
-	NetworkInBytes  uint64    `json:"network_in_bytes"`
-	NetworkOutBytes uint64    `json:"network_out_bytes"`
+	ObservedAt      time.Time            `json:"observed_at"`
+	CPUPercent      float64              `json:"cpu_percent"`
+	MemoryPercent   float64              `json:"memory_percent"`
+	DiskPercent     float64              `json:"disk_percent"`
+	Load1           float64              `json:"load1"`
+	NetworkInBytes  uint64               `json:"network_in_bytes"`
+	NetworkOutBytes uint64               `json:"network_out_bytes"`
+	Checks          []PublicServiceCheck `json:"checks,omitempty"`
 }

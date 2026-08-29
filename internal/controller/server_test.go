@@ -113,7 +113,7 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 			Disks:            []model.DiskMetric{{Mount: "/", UsedBytes: 80, TotalBytes: 100}},
 			Networks:         []model.NetworkMetric{{Name: "eth0", BytesIn: 4096, BytesOut: 2048}},
 		},
-		Checks: []model.ServiceCheck{{Name: "private-db", Target: "10.0.0.6:5432", Status: "down"}},
+		Checks: []model.ServiceCheck{{ID: "private-check-id", Name: "private-db", Type: "ping", Target: "10.0.0.6", Status: "down", LatencyMS: 23, PacketLossPercent: 12.5, Message: "private failure"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,10 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 || publicMetrics.Samples[0].NetworkInBytes != 4096 || publicMetrics.Samples[0].NetworkOutBytes != 2048 {
 		t.Fatalf("unexpected public metrics: %#v", publicMetrics)
 	}
-	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-db", "10.0.0.6:5432"} {
+	if checks := publicMetrics.Samples[0].Checks; len(checks) != 1 || checks[0].ID != "ping-1" || checks[0].Name != "PING 1" || checks[0].Type != "ping" || checks[0].Status != "down" || checks[0].LatencyMS != 23 || checks[0].PacketLossPercent != 12.5 {
+		t.Fatalf("unexpected public checks: %#v", checks)
+	}
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-check-id", "private-db", "10.0.0.6", "private failure"} {
 		if strings.Contains(metricsResponse.Body.String(), secret) {
 			t.Fatalf("public metrics leaked %q: %s", secret, metricsResponse.Body.String())
 		}

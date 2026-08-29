@@ -668,11 +668,36 @@ func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request)
 			Load1:           sample.Metrics.Load1,
 			NetworkInBytes:  networkIn,
 			NetworkOutBytes: networkOut,
+			Checks:          publicServiceChecks(sample.Checks),
 		})
 	}
 	w.Header().Set("Cache-Control", "public, max-age=5, stale-while-revalidate=15")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	writeJSON(w, http.StatusOK, map[string]any{"node_id": publicNodeID(node.ID), "resolution_seconds": resolution, "samples": publicSamples})
+}
+
+func publicServiceChecks(checks []model.ServiceCheck) []model.PublicServiceCheck {
+	counts := make(map[string]int)
+	result := make([]model.PublicServiceCheck, 0, len(checks))
+	for _, check := range checks {
+		checkType := strings.ToLower(strings.TrimSpace(check.Type))
+		switch checkType {
+		case "http", "tcp", "ping":
+		default:
+			continue
+		}
+		counts[checkType]++
+		publicID := fmt.Sprintf("%s-%d", checkType, counts[checkType])
+		result = append(result, model.PublicServiceCheck{
+			ID:                publicID,
+			Name:              fmt.Sprintf("%s %d", strings.ToUpper(checkType), counts[checkType]),
+			Type:              checkType,
+			Status:            check.Status,
+			LatencyMS:         check.LatencyMS,
+			PacketLossPercent: check.PacketLossPercent,
+		})
+	}
+	return result
 }
 
 func publicNodeID(nodeID string) string {
