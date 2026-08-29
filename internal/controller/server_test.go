@@ -160,10 +160,10 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	if len(publicMetrics.Samples) != 1 || publicMetrics.Samples[0].CPUPercent != 37.4 || publicMetrics.Samples[0].MemoryPercent != 60 || publicMetrics.Samples[0].NetworkInBytes != 4096 || publicMetrics.Samples[0].NetworkOutBytes != 2048 {
 		t.Fatalf("unexpected public metrics: %#v", publicMetrics)
 	}
-	if checks := publicMetrics.Samples[0].Checks; len(checks) != 1 || checks[0].ID != "ping-1" || checks[0].Name != "PING 1" || checks[0].Type != "ping" || checks[0].Status != "down" || checks[0].LatencyMS != 23 || checks[0].PacketLossPercent != 12.5 {
+	if checks := publicMetrics.Samples[0].Checks; len(checks) != 1 || checks[0].ID != "ping-1" || checks[0].Name != "private-db" || checks[0].Type != "ping" || checks[0].Status != "down" || checks[0].LatencyMS != 23 || checks[0].PacketLossPercent != 12.5 {
 		t.Fatalf("unexpected public checks: %#v", checks)
 	}
-	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-check-id", "private-db", "10.0.0.6", "private failure"} {
+	for _, secret := range []string{"node_public", "10.0.0.5", "internal-host", "private-check-id", "10.0.0.6", "private failure"} {
 		if strings.Contains(metricsResponse.Body.String(), secret) {
 			t.Fatalf("public metrics leaked %q: %s", secret, metricsResponse.Body.String())
 		}
@@ -200,6 +200,70 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 		if !strings.Contains(privateBody, secret) {
 			t.Fatalf("authenticated private dashboard omitted %q: %s", secret, privateBody)
 		}
+	}
+}
+
+func TestAdminSessionSurvivesRestartAndLogoutRevokesIt(t *testing.T) {
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/persistent-session.db"
+	cfg := Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}
+
+	firstStore, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstServer := NewServer(cfg, firstStore)
+	setupRequest := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(`{"username":"admin","password":"correct-horse-battery-staple"}`))
+	setupRequest.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	firstServer.mux.ServeHTTP(setupResponse, setupRequest)
+	if setupResponse.Code != http.StatusCreated {
+		t.Fatalf("setup status: %d %s", setupResponse.Code, setupResponse.Body.String())
+	}
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Value == "" {
+		t.Fatalf("expected persistent session cookie, got %#v", cookies)
+	}
+	if err := firstStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	secondStore, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondServer := NewServer(cfg, secondStore)
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	meRequest.AddCookie(cookies[0])
+	meResponse := httptest.NewRecorder()
+	secondServer.mux.ServeHTTP(meResponse, meRequest)
+	if meResponse.Code != http.StatusOK || !strings.Contains(meResponse.Body.String(), `"username":"admin"`) {
+		t.Fatalf("restored session status: %d %s", meResponse.Code, meResponse.Body.String())
+	}
+
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	logoutRequest.AddCookie(cookies[0])
+	logoutResponse := httptest.NewRecorder()
+	secondServer.mux.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusNoContent {
+		t.Fatalf("logout status: %d %s", logoutResponse.Code, logoutResponse.Body.String())
+	}
+	if err := secondStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	thirdStore, err := store.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer thirdStore.Close()
+	thirdServer := NewServer(cfg, thirdStore)
+	meRequest = httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	meRequest.AddCookie(cookies[0])
+	meResponse = httptest.NewRecorder()
+	thirdServer.mux.ServeHTTP(meResponse, meRequest)
+	if meResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("logged-out session survived restart: %d %s", meResponse.Code, meResponse.Body.String())
 	}
 }
 

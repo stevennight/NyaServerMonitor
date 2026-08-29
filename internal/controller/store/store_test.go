@@ -29,6 +29,51 @@ func insertMetricBucketTestSample(t *testing.T, st *Store, nodeID string, observ
 	}
 }
 
+func TestAdminSessionRoundTripExpiryAndDelete(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir()+"/sessions.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	user, err := st.CreateUser(ctx, "admin", "password-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	if err := st.SaveAdminSession(ctx, AdminSession{TokenHash: "session-hash", UserID: user.ID, CSRFToken: "csrf-token", ExpiresAt: expiresAt}); err != nil {
+		t.Fatal(err)
+	}
+	session, ok, err := st.LoadAdminSession(ctx, "session-hash")
+	if err != nil || !ok {
+		t.Fatalf("load session: ok=%v err=%v", ok, err)
+	}
+	if session.UserID != user.ID || session.Username != "admin" || session.CSRFToken != "csrf-token" || !session.ExpiresAt.Equal(expiresAt) || session.CreatedAt.IsZero() {
+		t.Fatalf("unexpected session: %#v", session)
+	}
+	if err := st.DeleteAdminSession(ctx, "session-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.LoadAdminSession(ctx, "session-hash"); err != nil || ok {
+		t.Fatalf("deleted session: ok=%v err=%v", ok, err)
+	}
+
+	if err := st.SaveAdminSession(ctx, AdminSession{TokenHash: "expired-hash", UserID: user.ID, CSRFToken: "expired-csrf", ExpiresAt: time.Now().UTC().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := st.LoadAdminSession(ctx, "expired-hash"); err != nil || ok {
+		t.Fatalf("expired session: ok=%v err=%v", ok, err)
+	}
+	var count int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admin_sessions WHERE token_hash = ?`, "expired-hash").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expired session was not deleted")
+	}
+}
+
 func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(ctx, t.TempDir()+"/monitor.db")

@@ -72,6 +72,7 @@ type Server struct {
 	publicAt        time.Time
 	publicSort      string
 	publicBody      []byte
+	sessionMu       sync.Mutex
 }
 
 type nonceCache struct {
@@ -238,6 +239,9 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			if err := s.store.PruneMetrics(ctx, now.Add(-s.cfg.MetricsRetention)); err != nil {
 				s.log.Warn("prune metrics failed", "error", err)
 			}
+			if err := s.store.PruneAdminSessions(ctx, now); err != nil {
+				s.log.Warn("prune admin sessions failed", "error", err)
+			}
 		}
 	}
 }
@@ -287,7 +291,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "unable to create administrator")
 		return
 	}
-	session, err := s.sessions.Create(user.ID, user.Username)
+	session, err := s.createSession(r.Context(), user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session creation failed")
 		return
@@ -327,7 +331,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.limiter.Success(key)
-	session, err := s.sessions.Create(user.ID, user.Username)
+	session, err := s.createSession(r.Context(), user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session creation failed")
 		return
@@ -338,8 +342,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, session auth.Session) {
-	s.sessions.Delete(session.ID)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteStrictMode})
+	if err := s.deleteSession(r.Context(), session.ID); err != nil {
+		s.log.Error("delete admin session failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "unable to end session")
+		return
+	}
 	_ = s.store.AddAudit(r.Context(), session.Username, "logout", "auth", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -415,7 +423,12 @@ func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request, auth.Ses
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		session, ok := s.sessions.Get(cookie.Value)
+		session, ok, err := s.loadSession(r.Context(), cookie.Value)
+		if err != nil {
+			s.log.Error("load admin session failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "authentication unavailable")
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
@@ -688,9 +701,13 @@ func publicServiceChecks(checks []model.ServiceCheck) []model.PublicServiceCheck
 		}
 		counts[checkType]++
 		publicID := fmt.Sprintf("%s-%d", checkType, counts[checkType])
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			name = fmt.Sprintf("%s %d", strings.ToUpper(checkType), counts[checkType])
+		}
 		result = append(result, model.PublicServiceCheck{
 			ID:                publicID,
-			Name:              fmt.Sprintf("%s %d", strings.ToUpper(checkType), counts[checkType]),
+			Name:              name,
 			Type:              checkType,
 			Status:            check.Status,
 			LatencyMS:         check.LatencyMS,
@@ -1612,6 +1629,63 @@ func nodeCredentialResponse(cfg Config, node model.Node, token string) nodeCrede
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, session auth.Session) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: session.ID, Path: "/", MaxAge: int(time.Until(session.ExpiresAt).Seconds()), HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteStrictMode})
+}
+
+func (s *Server) createSession(ctx context.Context, user store.User) (auth.Session, error) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	session, err := s.sessions.Create(user.ID, user.Username)
+	if err != nil {
+		return auth.Session{}, err
+	}
+	if err := s.store.SaveAdminSession(ctx, store.AdminSession{
+		TokenHash: sessionTokenHash(session.ID),
+		UserID:    session.UserID,
+		CSRFToken: session.CSRFToken,
+		ExpiresAt: session.ExpiresAt,
+	}); err != nil {
+		s.sessions.Delete(session.ID)
+		return auth.Session{}, err
+	}
+	return session, nil
+}
+
+func (s *Server) loadSession(ctx context.Context, token string) (auth.Session, bool, error) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	if session, ok := s.sessions.Get(token); ok {
+		return session, true, nil
+	}
+	record, ok, err := s.store.LoadAdminSession(ctx, sessionTokenHash(token))
+	if err != nil || !ok {
+		return auth.Session{}, false, err
+	}
+	session := auth.Session{
+		ID:        token,
+		UserID:    record.UserID,
+		Username:  record.Username,
+		CSRFToken: record.CSRFToken,
+		ExpiresAt: record.ExpiresAt,
+	}
+	if !s.sessions.Restore(session) {
+		return auth.Session{}, false, nil
+	}
+	return session, true, nil
+}
+
+func (s *Server) deleteSession(ctx context.Context, token string) error {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	if err := s.store.DeleteAdminSession(ctx, sessionTokenHash(token)); err != nil {
+		return err
+	}
+	s.sessions.Delete(token)
+	return nil
+}
+
+func sessionTokenHash(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", digest[:])
 }
 
 func secureHeaders(next http.Handler) http.Handler {

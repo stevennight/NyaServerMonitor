@@ -60,6 +60,16 @@ func (s *Sessions) Get(id string) (Session, bool) {
 	return session, true
 }
 
+func (s *Sessions) Restore(session Session) bool {
+	if session.ID == "" || !time.Now().Before(session.ExpiresAt) {
+		return false
+	}
+	s.mu.Lock()
+	s.items[session.ID] = session
+	s.mu.Unlock()
+	return true
+}
+
 func (s *Sessions) Delete(id string) {
 	s.mu.Lock()
 	delete(s.items, id)

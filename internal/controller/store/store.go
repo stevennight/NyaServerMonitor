@@ -31,6 +31,15 @@ type User struct {
 	CreatedAt    time.Time
 }
 
+type AdminSession struct {
+	TokenHash string
+	UserID    int64
+	Username  string
+	CSRFToken string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
 type NodeCredential struct {
 	Node            model.Node
 	TokenHash       string
@@ -104,6 +113,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			totp_secret TEXT NOT NULL DEFAULT '',
 			totp_enabled INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS admin_sessions (
+			token_hash TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			csrf_token TEXT NOT NULL,
+			expires_at_unix INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
@@ -236,6 +253,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_sessions_expiry ON admin_sessions(expires_at_unix);`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_node_time ON metric_samples(node_id, observed_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_bucket_node_time ON metric_buckets(node_id, resolution_seconds, bucket_start);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(created_at DESC);`,
@@ -440,6 +458,60 @@ func (s *Store) FindUserByUsername(ctx context.Context, username string) (User, 
 	user.TOTPEnabled = enabled == 1
 	user.CreatedAt = parseTime(created)
 	return user, nil
+}
+
+func (s *Store) SaveAdminSession(ctx context.Context, session AdminSession) error {
+	createdAt := session.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO admin_sessions (token_hash, user_id, csrf_token, expires_at_unix, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(token_hash) DO UPDATE SET
+			user_id = excluded.user_id,
+			csrf_token = excluded.csrf_token,
+			expires_at_unix = excluded.expires_at_unix`,
+		session.TokenHash, session.UserID, session.CSRFToken, session.ExpiresAt.Unix(), formatTime(createdAt))
+	return err
+}
+
+func (s *Store) LoadAdminSession(ctx context.Context, tokenHash string) (AdminSession, bool, error) {
+	var session AdminSession
+	var expiresAtUnix int64
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT s.token_hash, s.user_id, u.username, s.csrf_token, s.expires_at_unix, s.created_at
+		FROM admin_sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash = ?`, tokenHash).Scan(
+		&session.TokenHash, &session.UserID, &session.Username, &session.CSRFToken, &expiresAtUnix, &createdAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminSession{}, false, nil
+	}
+	if err != nil {
+		return AdminSession{}, false, err
+	}
+	session.ExpiresAt = time.Unix(expiresAtUnix, 0).UTC()
+	session.CreatedAt = parseTime(createdAt)
+	if !time.Now().Before(session.ExpiresAt) {
+		if err := s.DeleteAdminSession(ctx, tokenHash); err != nil {
+			return AdminSession{}, false, err
+		}
+		return AdminSession{}, false, nil
+	}
+	return session, true, nil
+}
+
+func (s *Store) DeleteAdminSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+func (s *Store) PruneAdminSessions(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at_unix <= ?`, now.Unix())
+	return err
 }
 
 func (s *Store) SetTOTP(ctx context.Context, userID int64, secret string, enabled bool) error {
