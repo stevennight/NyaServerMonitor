@@ -14,7 +14,8 @@ func TestAdminServiceCheckHistoryUIIsEmbedded(t *testing.T) {
 	for _, required := range []string{
 		"serviceCheckHistoryChart",
 		"service-check-chart-host",
-		"service-chart-readout",
+		"chart-tooltip service-chart-tooltip",
+		`data-chart-interaction="service"`,
 		"data-service-check-id",
 		"packet_loss_percent",
 		"service-check-target",
@@ -35,8 +36,12 @@ func TestNodeDetailChartsAndRefreshUIAreEmbedded(t *testing.T) {
 	}
 	page := string(data)
 	for _, required := range []string{
-		"chart-readout",
-		"可见时间刻度数值",
+		"bindChartInteractions",
+		`data-chart-interaction="resource"`,
+		"chart-interaction-target",
+		"chart-tooltip",
+		"showNearest",
+		"pointermove",
 		"detailRefreshIntervalMillis = 15000",
 		"refreshAdminDetail",
 		"service-check-current-host",
@@ -47,6 +52,11 @@ func TestNodeDetailChartsAndRefreshUIAreEmbedded(t *testing.T) {
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("node detail chart/refresh UI is missing %q", required)
+		}
+	}
+	for _, removed := range []string{"chart-readout-item", "service-chart-readout"} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("node detail chart UI still contains obsolete readout %q", removed)
 		}
 	}
 }

@@ -394,15 +394,23 @@
     .service-chart-swatch{width:18px;height:3px;border-radius:2px;background:var(--blue)}
     .service-chart-swatch.quality{height:0;border-top:2px dashed var(--yellow);background:transparent}
     .service-chart-empty{min-height:260px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:var(--muted)}
-    .chart-readout,.service-chart-readout{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px}
-    .chart-readout-item,.service-chart-readout-item{min-width:0;padding:8px 9px;border-left:2px solid var(--line);background:var(--theme-subtle-surface)}
-    .chart-readout-time,.service-chart-readout-time{display:block;color:var(--muted);font-size:10px;white-space:nowrap}
-    .chart-readout-value{display:block;margin-top:2px;color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
-    .service-chart-readout-values{display:grid;gap:3px;margin-top:4px}
-    .service-chart-readout-value{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;color:var(--muted);font-size:10px}
-    .service-chart-readout-value span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .service-chart-readout-value strong{color:var(--text);font-size:11px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
-    .service-chart-readout-value.failed strong{color:var(--red)}
+    .history-card .chart,.service-chart-wrap{position:relative}
+    .chart-interaction-target{fill:transparent;pointer-events:all;cursor:crosshair;touch-action:pan-y}
+    .chart-hover-line{stroke:var(--text);stroke-width:1;stroke-dasharray:3 3;opacity:.65;pointer-events:none;vector-effect:non-scaling-stroke}
+    .chart-hover-point{fill:var(--panel);stroke:var(--text);stroke-width:2.2;pointer-events:none;vector-effect:non-scaling-stroke}
+    .chart-hover-line[hidden],.chart-hover-point[hidden]{display:none}
+    .service-chart-hit-sample{fill:transparent;pointer-events:none}
+    .chart-tooltip{position:absolute;z-index:4;min-width:150px;max-width:min(320px,calc(100% - 8px));padding:9px 10px;border:1px solid var(--theme-hover-border);border-radius:6px;background:var(--theme-side-bg);box-shadow:0 10px 28px var(--theme-overlay-shadow);color:var(--text);font-size:11px;line-height:1.45;pointer-events:none}
+    .chart-tooltip[hidden]{display:none}
+    .chart-tooltip-time{display:block;margin-bottom:4px;color:var(--muted);font-size:10px;white-space:nowrap}
+    .chart-tooltip-value{display:block;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+    .service-chart-tooltip-values{display:grid;gap:5px}
+    .service-chart-tooltip-value{display:grid;grid-template-columns:minmax(72px,1fr) minmax(0,1.5fr);align-items:start;gap:10px}
+    .service-chart-tooltip-name{display:flex;align-items:center;gap:6px;min-width:0;color:var(--muted)}
+    .service-chart-tooltip-name span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-chart-tooltip-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:var(--blue)}
+    .service-chart-tooltip-value strong{text-align:right;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .service-chart-tooltip-value.failed strong{color:var(--red)}
     .modal-wide{width:min(calc(100vw - 40px),1500px);height:calc(100vh - 40px);max-height:calc(100vh - 40px);display:flex;flex-direction:column;overflow:hidden}
     .modal-wide .modal-head{position:sticky;top:0;z-index:3;flex:0 0 auto;background:var(--panel)}
     .modal-wide .node-detail-modal-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
@@ -414,8 +422,7 @@
       .service-check-result{grid-column:1/-1}
       .service-check-type{grid-column:2;grid-row:1}
       .service-check-chart-host{min-height:300px}
-      .chart-readout,.service-chart-readout{grid-template-columns:1fr;gap:5px}
-      .chart-readout-item,.service-chart-readout-item{padding:7px 6px}
+      .chart-tooltip{max-width:calc(100% - 8px)}
       .modal-backdrop:has(.modal-wide){padding:8px}
       .modal-wide{width:calc(100vw - 16px);height:calc(100dvh - 16px);max-height:calc(100dvh - 16px)}
       .modal-wide .modal-head{padding:14px 15px}
@@ -877,7 +884,7 @@
     function overview(){const d=state.dashboard||{nodes:[],recent_events:[]};const nodes=d.nodes||[];const visible=visibleNodes(nodes);const degradedNodes=nodes.filter(nodeHasDegraded).length;const pendingNodes=nodes.filter(n=>n.status==='pending').length;const generated=d.generated_at_unix?d.generated_at_unix*1000:null;return `<div class="view-head"><div><h2>监控总览</h2><p>所有节点的最新状态与资源概览。</p></div><div class="actions"><button class="btn primary" id="new-node">+ 添加节点</button></div></div><div class="grid stats"><div class="stat"><div class="label">节点总数</div><div class="value">${d.total_nodes||0}</div><div class="hint">已注册节点</div></div><div class="stat"><div class="label">在线</div><div class="value good">${d.online_nodes||0}</div><div class="hint">正在上报</div></div><div class="stat"><div class="label">离线</div><div class="value ${d.offline_nodes?'warn':''}">${d.offline_nodes||0}</div><div class="hint">超过离线阈值</div></div><div class="stat"><div class="label">检查异常</div><div class="value ${degradedNodes?'bad':''}">${degradedNodes}</div><div class="hint">${d.degraded_checks||0} 个服务检查</div></div><div class="stat"><div class="label">待上报</div><div class="value ${pendingNodes?'warn':''}">${pendingNodes}</div><div class="hint">尚未连接</div></div><div class="stat"><div class="label">已撤销</div><div class="value ${d.revoked_nodes?'bad':''}">${d.revoked_nodes||0}</div><div class="hint">凭据已失效</div></div></div><div class="monitor-toolbar"><div class="search-field"><span class="search-icon">⌕</span><input id="node-search" type="search" value="${esc(state.filters.query)}" placeholder="搜索节点、主机、IP 或标签" aria-label="搜索节点"></div><label class="filter-select">状态<select id="status-filter"><option value="all"${state.filters.status==='all'?' selected':''}>全部状态</option><option value="online"${state.filters.status==='online'?' selected':''}>在线</option><option value="degraded"${state.filters.status==='degraded'?' selected':''}>检查异常</option><option value="offline"${state.filters.status==='offline'?' selected':''}>离线</option><option value="pending"${state.filters.status==='pending'?' selected':''}>待上报</option><option value="revoked"${state.filters.status==='revoked'?' selected':''}>已撤销</option></select></label><label class="filter-select">分组<select id="group-filter">${groupOptions(nodes)}</select></label><label class="auto-refresh"><input id="auto-refresh" type="checkbox"${state.autoRefresh?' checked':''}> 自动刷新</label><span id="node-count" class="monitor-count muted">${visible.length} / ${nodes.length} 个节点</span></div><section class="node-wall"><div class="wall-head"><h3>节点状态墙</h3><span class="muted">更新于 ${fmtTime(generated)}</span></div><div id="node-grid" class="node-grid">${nodeCards(visible)}</div></section><div class="grid columns" style="margin-top:24px"><section class="panel"><div class="panel-head"><h3>最近审计</h3><button class="btn small" data-view="audit">查看全部</button></div><div class="panel-body">${eventRows(d.recent_events)}</div></section><section class="panel"><div class="panel-head"><h3>运行说明</h3><span class="muted">只读汇总</span></div><div class="panel-body"><div class="event"><span class="event-pin"></span><div><div class="event-title">主节点只接收探针报告</div><div class="event-detail">不会向子节点发送 shell、脚本、配置或更新指令。</div></div></div><div class="event"><span class="event-pin"></span><div><div class="event-title">凭据由节点独立持有</div><div class="event-detail">token 仅在创建或轮换时显示，数据库只保存派生哈希。</div></div></div></div></section></div>`;}
      function nodesView(){const nodes=state.nodes||[];const visible=sortNodes(visibleNodes(nodes));return `<div class="view-head"><div><h2>节点管理</h2><p>安装命令仅读取当前凭据；轮换凭据会立即使旧 token 失效。</p></div><div class="actions"><button class="btn primary" id="new-node">+ 添加节点</button></div></div><section class="panel"><div class="panel-head"><h3>全部节点</h3><span class="muted">${visible.length} / ${nodes.length} 个</span></div><div class="monitor-toolbar"><div class="search-field"><span class="search-icon">⌕</span><input id="admin-node-search" type="search" value="${esc(state.filters.query)}" placeholder="搜索节点、主机、IP 或标签" aria-label="搜索管理节点"></div><label class="filter-select">状态<select id="admin-status-filter"><option value="all"${state.filters.status==='all'?' selected':''}>全部状态</option><option value="online"${state.filters.status==='online'?' selected':''}>在线</option><option value="degraded"${state.filters.status==='degraded'?' selected':''}>检查异常</option><option value="offline"${state.filters.status==='offline'?' selected':''}>离线</option><option value="pending"${state.filters.status==='pending'?' selected':''}>待上报</option><option value="revoked"${state.filters.status==='revoked'?' selected':''}>已撤销</option></select></label><label class="filter-select">分组<select id="admin-group-filter">${groupOptions(nodes)}</select></label><label class="filter-select">排序<select id="admin-node-sort">${nodeSortOptions()}</select></label></div><div class="table-wrap"><table class="table"><thead><tr><th>节点</th><th>状态</th><th>地区</th><th>主机</th><th>探针版本</th><th>CPU / 内存</th><th>最近上报</th></tr></thead><tbody>${nodeRows(visible,visible.length!==nodes.length)}</tbody></table></div></section>`;}
      function chartLine(samples,getter,formatter){const visible=(samples||[]).slice(-72);if(!visible.length)return '<div class="empty chart-empty">暂无历史指标</div>';const values=visible.map(sample=>{const value=Number(getter(sample));return Number.isFinite(value)?value:0;});let min=Math.min(...values),max=Math.max(...values),range=max-min;if(range===0){range=Math.max(Math.abs(max)*.2,1);min=Math.max(0,min-range/2);max=max+range/2;}else{const padding=range*.1;min=Math.max(0,min-padding);max=max+padding;}const width=640,height=190,left=42,right=10,top=12,bottom=30,plotWidth=width-left-right,plotHeight=height-top-bottom,baseY=top+plotHeight;const pointAt=(value,index)=>{const x=visible.length===1?left+plotWidth/2:left+index/(visible.length-1)*plotWidth;const y=top+(max-value)/(max-min)*plotHeight;return {x,y};};const points=values.map(pointAt);const pointString=points.map(point=>`${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');const areaPath=`M ${points[0].x.toFixed(2)} ${baseY.toFixed(2)} L ${pointString.replace(/,/g,' ')} L ${points[points.length-1].x.toFixed(2)} ${baseY.toFixed(2)} Z`;const gridValues=[max,(max+min)/2,min];const grid=gridValues.map(value=>{const y=top+(max-value)/(max-min)*plotHeight;return `<line class="chart-grid-line" x1="${left}" y1="${y.toFixed(2)}" x2="${width-right}" y2="${y.toFixed(2)}"></line><text class="chart-axis-label" x="${left-8}" y="${(y+3).toFixed(2)}" text-anchor="end">${esc(formatter(value))}</text>`;}).join('');const labelIndexes=[0,Math.floor((visible.length-1)/2),visible.length-1].filter((index,position,all)=>all.indexOf(index)===position);const labels=labelIndexes.map(index=>{const date=new Date(visible[index].observed_at);const label=Number.isNaN(date.getTime())?'--':`${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;const point=points[index];return `<text class="chart-axis-label" x="${point.x.toFixed(2)}" y="${height-7}" text-anchor="middle">${esc(label)}</text>`;}).join('');const circles=points.map((point,index)=>{const date=new Date(visible[index].observed_at);const timestamp=Number.isNaN(date.getTime())?'未知时间':date.toLocaleString();return `<circle class="chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"><title>${esc(timestamp)} · ${esc(formatter(values[index]))}</title></circle>`;}).join('');return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg>`;}
-     function historyCard(title,samples,getter,formatter){return `<div class="history-card"><h4>${title}</h4><div class="chart">${chartLine(samples,getter,formatter)}</div></div>`;}
+     function historyCard(title,samples,getter,formatter){const renderLine=window.nyasmChartLine||chartLine;return `<div class="history-card"><h4>${title}</h4><div class="chart">${renderLine(samples,getter,formatter)}</div></div>`;}
      function detailView(n){const samples=state.metrics||[];const memoryValue=s=>{const total=Number(s.metrics?.memory_total_bytes||0);return total?Number(s.metrics?.memory_used_bytes||0)/total*100:0;};const networkValue=s=>(s.metrics?.networks||[]).reduce((total,item)=>total+Number(item.bytes_in||0)+Number(item.bytes_out||0),0);const diskValue=s=>diskOverallPercent({metrics:s.metrics});const checkRows=n.checks?.length?n.checks.map(c=>{const detail=c.type==='ping'?`${Number(c.latency_ms||0)} ms · 丢包 ${Number(c.packet_loss_percent||0).toFixed(1)}%`:c.type==='tls'?`${c.tls_expires_at_unix?fmtTime(Number(c.tls_expires_at_unix)*1000):'无到期时间'} · ${esc(c.tls_version||'TLS')}`:c.status==='up'?`${Number(c.latency_ms||0)} ms`:esc(c.message||'down');return `<div class="metric-row"><span>${esc(c.name)}</span><span class="check-status-line">${statusBadge(c.status==='up'?'online':c.status==='unknown'?'pending':'offline')}<span class="mono">${detail}</span></span><span class="mono">${esc(c.type)}</span></div>`;}).join(''):'<div class="muted" style="margin-top:8px">该节点未配置本地检查。</div>';const shownIP=nodeIP(n)||'--';const autoIPv4=n.public_ipv4||'--';const autoIPv6=n.public_ipv6||'--';const localIP=n.system?.ip||'--';return `<div class="node-detail"><div class="actions detail-actions"><label class="filter-select">范围<select id="metric-range"><option value="1"${state.metricsHours===1?' selected':''}>1 小时</option><option value="6"${state.metricsHours===6?' selected':''}>6 小时</option><option value="24"${state.metricsHours===24?' selected':''}>24 小时</option><option value="168"${state.metricsHours===168?' selected':''}>7 天</option><option value="720"${state.metricsHours===720?' selected':''}>30 天</option></select></label><button class="btn small primary" id="install-node"${n.status==='revoked'?' disabled':''}>生成安装命令</button><button class="btn small" id="rotate-token">轮换凭据</button>${n.status==='revoked'?'<button class="btn small" id="restore-node">恢复</button>':'<button class="btn small danger" id="revoke-node">撤销</button>'}</div><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；需要失效旧 token 时，请使用独立的轮换操作。历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${esc(n.id)}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${esc(n.system?.hostname||'未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${esc(n.system?.os||'--')} / ${esc(n.system?.arch||'--')}</div></div><div><div class="meta-label">展示 IP${n.ip_override?' · 手动':''}</div><div class="meta-value mono">${esc(shownIP)}</div></div><div><div class="meta-label">出口 IPv4 · 自动</div><div class="meta-value mono">${esc(autoIPv4)}</div></div><div><div class="meta-label">出口 IPv6 · 自动</div><div class="meta-value mono">${esc(autoIPv6)}</div></div><div><div class="meta-label">本机网卡 IP</div><div class="meta-value mono">${esc(localIP)}</div></div><div><div class="meta-label">国家/地区${n.country_override?' · 手动':''}</div><div class="meta-value">${countryMarkup(n)}</div></div></div><div class="history-grid">${historyCard('CPU',samples,s=>s.metrics?.cpu_percent||0,v=>Number(v).toFixed(1)+'%')}${historyCard('内存',samples,memoryValue,v=>Number(v).toFixed(1)+'%')}${historyCard('磁盘',samples,diskValue,v=>Number(v).toFixed(1)+'%')}${historyCard('负载 1m',samples,s=>s.metrics?.load1||0,v=>Number(v).toFixed(2))}${historyCard('网络累计流量',samples,networkValue,v=>fmtBytes(v))}</div><div style="margin-top:22px"><div class="meta-label">服务检查</div>${checkRows}</div></div>`;}
     const alertTypeLabel=type=>({node_offline:'节点离线',service_down:'服务检查失败',cpu_high:'CPU 过高',memory_high:'内存过高',disk_high:'磁盘过高',latency_high:'延迟过高',packet_loss_high:'丢包率过高',tls_expiring:'TLS 即将过期',tls_changed:'TLS 证书变化',tls_invalid:'TLS 校验失败'}[type]||type);
     const secondsLabel=value=>{const seconds=Math.max(0,Number(value||0));if(!seconds)return '立即';if(seconds<60)return seconds+' 秒';if(seconds<3600)return Math.round(seconds/60)+' 分钟';if(seconds<86400)return (seconds/3600).toFixed(seconds%3600?1:0)+' 小时';return (seconds/86400).toFixed(seconds%86400?1:0)+' 天';};
@@ -1158,15 +1165,11 @@
         const circles = points.map((point, index) => {
           const date = new Date(visible[index].observed_at);
           const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
-          return `<circle class="chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"><title>${escapeChartText(timestamp)} · ${escapeChartText(formatter(values[index]))}</title></circle>`;
+          return `<circle class="chart-point" data-chart-time="${escapeChartText(timestamp)}" data-chart-value="${escapeChartText(formatter(values[index]))}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"></circle>`;
         }).join('');
-        const readout = labelIndexes.map(index => {
-          const date = new Date(visible[index].observed_at);
-          const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
-          return `<div class="chart-readout-item"><span class="chart-readout-time">${escapeChartText(timestamp)}</span><strong class="chart-readout-value">${escapeChartText(formatter(values[index]))}</strong></div>`;
-        }).join('');
-        return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg><div class="chart-readout" aria-label="可见时间刻度数值">${readout}</div>`;
+        return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g><line class="chart-hover-line" x1="0" y1="${top}" x2="0" y2="${baseY}" hidden></line><circle class="chart-hover-point" cx="0" cy="0" r="4" hidden></circle><rect class="chart-interaction-target" data-chart-interaction="resource" x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" tabindex="0" role="slider" aria-label="浏览历史指标采样"></rect></svg><div class="chart-tooltip" role="status" hidden><span class="chart-tooltip-time"></span><strong class="chart-tooltip-value"></strong></div>`;
       };
+      window.nyasmChartLine = homeChartLine;
       const homeNetworkRateSamples = (samples, direction) => { const list = samples || []; return list.map((sample, index) => { const previous = list[index - 1]; if (!previous) return { ...sample, network_rate: 0 }; const current = (sample.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const prior = (previous.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const elapsed = (new Date(sample.observed_at).getTime() - new Date(previous.observed_at).getTime()) / 1000; return { ...sample, network_rate: elapsed > 0 && current >= prior ? (current - prior) / elapsed : 0 }; }); };
       const detailStatusBadge = status => { const labels = { online: '在线', offline: '离线', pending: '待上报', revoked: '已撤销' }; const label = labels[status] || status || '--'; return `<span class="badge ${escapeChartText(status || '')}"><span class="mini-dot"></span>${escapeChartText(label)}</span>`; };
       const detailFlag = value => window.nyasmFlagImageMarkup?.(value) || '';
@@ -1244,6 +1247,7 @@
         const bottom = 32;
         const plotWidth = width - left - right;
         const plotHeight = height - top - bottom;
+        const baseY = top + plotHeight;
         const pointX = index => visible.length === 1 ? left + plotWidth / 2 : left + index / (visible.length - 1) * plotWidth;
         const latencyValues = selected.flatMap(check => visible.map(sample => serviceCheckAt(sample, check.id)).filter(Boolean).map(item => Number(item.latency_ms || 0))).filter(Number.isFinite);
         const latencyMax = Math.max(10, Math.ceil(Math.max(...latencyValues, 0) * 1.1));
@@ -1259,7 +1263,7 @@
           const points = visible.map((sample, index) => { const check = serviceCheckAt(sample, definition.id); return check ? { check, sample, x: pointX(index), y: latencyY(Number(check.latency_ms || 0)) } : null; }).filter(Boolean);
           if (!points.length) return '';
           const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-          const circles = points.map(point => { const failed = point.check.status !== 'up'; const timestamp = new Date(point.sample.observed_at).toLocaleString(); const title = `${timestamp} · ${definition.name} · ${Number(point.check.latency_ms || 0)} ms${failed ? ` · ${point.check.message || '探测失败'}` : ''}`; return `<circle class="service-chart-point${failed ? ' service-chart-point-failed' : ''}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.7" fill="var(--panel)" stroke="${color}"><title>${escapeChartText(title)}</title></circle>`; }).join('');
+          const circles = points.map(point => { const failed = point.check.status !== 'up'; return `<circle class="service-chart-point${failed ? ' service-chart-point-failed' : ''}" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.7" fill="var(--panel)" stroke="${color}"></circle>`; }).join('');
           return `<path class="service-chart-line" d="${path}" stroke="${color}"></path>${circles}`;
         }).join('');
         let quality = '';
@@ -1274,38 +1278,31 @@
           }).filter(Boolean);
           if (points.length) {
             const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-            const circles = points.map(point => `<circle class="service-chart-quality-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.2"><title>${escapeChartText(`${new Date(point.sample.observed_at).toLocaleString()} · 丢包 ${point.value.toFixed(1)}%`)}</title></circle>`).join('');
+            const circles = points.map(point => `<circle class="service-chart-quality-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.2"></circle>`).join('');
             quality = `<path class="service-chart-quality" d="${path}"></path>${circles}`;
             rightAxis = [100, 50, 0].map(value => { const y = qualityY(value); return `<text class="service-chart-axis" x="${width - right + 8}" y="${(y + 3).toFixed(2)}" text-anchor="start">${value}%</text>`; }).join('');
           }
         }
         const legend = selected.map((check, index) => `<span class="service-chart-legend-item"><span class="service-chart-swatch" style="background:${serviceChartPalette[index % serviceChartPalette.length]}"></span>${escapeChartText(check.name)} · ${escapeChartText(serviceCheckTypeLabel(check.type))}</span>`).join('');
         const qualityLegend = showsPacketLoss ? '<span class="service-chart-legend-item"><span class="service-chart-swatch quality"></span>丢包率</span>' : '';
-        const readout = labelIndexes.map(index => {
-          const sample = visible[index];
+        const hitSamples = visible.map((sample, index) => {
           const date = new Date(sample.observed_at);
           const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
-          const values = selected.map((definition, seriesIndex) => {
+          const values = selected.map(definition => {
             const check = serviceCheckAt(sample, definition.id);
             const failed = check && check.status !== 'up';
-            let result = '--';
-            if (check) {
-              result = `${Number(check.latency_ms || 0)} ms`;
-              if (definition.type === 'ping') result += ` · 丢包 ${Number(check.packet_loss_percent || 0).toFixed(1)}%`;
-              if (failed) result += ' · 失败';
-            }
-            const color = serviceChartPalette[seriesIndex % serviceChartPalette.length];
-            return `<div class="service-chart-readout-value${failed ? ' failed' : ''}"><span style="color:${color}" title="${escapeChartText(definition.name)}">${escapeChartText(definition.name)}</span><strong>${escapeChartText(result)}</strong></div>`;
-          }).join('');
-          return `<div class="service-chart-readout-item"><span class="service-chart-readout-time">${escapeChartText(timestamp)}</span><div class="service-chart-readout-values">${values}</div></div>`;
+            return { id: definition.id, value: check ? serviceCheckResultText(check) : '--', failed: Boolean(failed) };
+          });
+          return `<circle class="service-chart-hit-sample" data-chart-time="${escapeChartText(timestamp)}" data-chart-values="${escapeChartText(JSON.stringify(values))}" cx="${pointX(index).toFixed(2)}" cy="${baseY}" r="0"></circle>`;
         }).join('');
+        const tooltipRows = selected.map((definition, index) => `<div class="service-chart-tooltip-value" data-tooltip-series="${escapeChartText(definition.id)}"><span class="service-chart-tooltip-name"><span class="service-chart-tooltip-dot" style="background:${serviceChartPalette[index % serviceChartPalette.length]}"></span><span>${escapeChartText(definition.name)}</span></span><strong>--</strong></div>`).join('');
         const selectedPoints = visible.map(sample => serviceCheckAt(sample, selected[0].id)).filter(Boolean);
         const successful = selectedPoints.filter(check => check.status === 'up');
         const averageSource = successful.length ? successful : selectedPoints;
         const averageLatency = averageSource.length ? averageSource.reduce((sum, check) => sum + Number(check.latency_ms || 0), 0) / averageSource.length : 0;
         const availability = selectedPoints.length ? successful.length / selectedPoints.length * 100 : 0;
         const singleKPIs = selected.length === 1 ? `<span>平均耗时<strong>${averageLatency.toFixed(1)} ms</strong></span><span>可用率<strong>${availability.toFixed(1)}%</strong></span>${selected[0].type === 'ping' ? `<span>平均丢包<strong>${(selectedPoints.reduce((sum, check) => sum + Number(check.packet_loss_percent || 0), 0) / Math.max(1, selectedPoints.length)).toFixed(1)}%</strong></span>` : `<span>失败次数<strong>${selectedPoints.length - successful.length}</strong></span>`}` : `<span>对比检查<strong>${selected.length}</strong></span><span>历史采样<strong>${visible.length}</strong></span>`;
-        return `<div class="service-chart-kpis">${singleKPIs}</div><div class="service-chart-wrap"><svg class="service-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="服务检查耗时与质量历史图表"><g>${grid}${timeLabels}${rightAxis}</g><g>${lines}${quality}</g></svg></div><div class="service-chart-readout" aria-label="可见时间刻度检查数值">${readout}</div><div class="service-chart-legend">${legend}${qualityLegend}</div>`;
+        return `<div class="service-chart-kpis">${singleKPIs}</div><div class="service-chart-wrap"><svg class="service-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="服务检查耗时与质量历史图表"><g>${grid}${timeLabels}${rightAxis}</g><g>${lines}${quality}</g><g>${hitSamples}</g><line class="chart-hover-line" x1="0" y1="${top}" x2="0" y2="${baseY}" hidden></line><rect class="chart-interaction-target" data-chart-interaction="service" x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" tabindex="0" role="slider" aria-label="浏览服务检查历史采样"></rect></svg><div class="chart-tooltip service-chart-tooltip" role="status" hidden><span class="chart-tooltip-time"></span><div class="service-chart-tooltip-values">${tooltipRows}</div></div></div><div class="service-chart-legend">${legend}${qualityLegend}</div>`;
       };
       const serviceCheckHistoryMarkup = (node, samples, selectedIDs) => {
         const definitions = serviceCheckDefinitions(node, samples);
@@ -1391,6 +1388,120 @@
         }
         return trimDetailSamples(merged);
       };
+      const bindChartInteractions = (root = document) => {
+        root.querySelectorAll('[data-chart-interaction]').forEach(target => {
+          if (target.dataset.chartBound === 'true') return;
+          const svg = target.closest('svg');
+          const host = svg?.parentElement;
+          const tooltip = host ? Array.from(host.children).find(child => child.classList.contains('chart-tooltip')) : null;
+          const kind = target.dataset.chartInteraction;
+          const selector = kind === 'service' ? '.service-chart-hit-sample' : '.chart-point[data-chart-time]';
+          const samples = svg ? Array.from(svg.querySelectorAll(selector)) : [];
+          const line = svg?.querySelector('.chart-hover-line');
+          const hoverPoint = svg?.querySelector('.chart-hover-point');
+          if (!svg || !host || !tooltip || !line || !samples.length) return;
+          target.dataset.chartBound = 'true';
+          target.setAttribute('aria-valuemin', '1');
+          target.setAttribute('aria-valuemax', String(samples.length));
+          let currentIndex = samples.length - 1;
+          target.setAttribute('aria-valuenow', String(samples.length));
+          target.setAttribute('aria-valuetext', samples[currentIndex].dataset.chartTime || '最新采样');
+          const hide = () => {
+            line.hidden = true;
+            if (hoverPoint) hoverPoint.hidden = true;
+            tooltip.hidden = true;
+          };
+          const showSample = (index, event) => {
+            currentIndex = Math.max(0, Math.min(samples.length - 1, index));
+            const sample = samples[currentIndex];
+            const x = Number(sample.getAttribute('cx'));
+            const y = Number(sample.getAttribute('cy'));
+            if (!Number.isFinite(x)) return;
+            line.setAttribute('x1', String(x));
+            line.setAttribute('x2', String(x));
+            line.hidden = false;
+            if (hoverPoint && Number.isFinite(y)) {
+              hoverPoint.setAttribute('cx', String(x));
+              hoverPoint.setAttribute('cy', String(y));
+              hoverPoint.hidden = false;
+            }
+            const timestamp = sample.dataset.chartTime || '未知时间';
+            tooltip.querySelector('.chart-tooltip-time').textContent = timestamp;
+            let ariaValue = timestamp;
+            if (kind === 'service') {
+              let values = [];
+              try { values = JSON.parse(sample.dataset.chartValues || '[]'); } catch (_) {}
+              const valuesByID = new Map(values.map(value => [String(value.id), value]));
+              tooltip.querySelectorAll('[data-tooltip-series]').forEach(row => {
+                const value = valuesByID.get(row.dataset.tooltipSeries);
+                const text = value?.value || '--';
+                row.classList.toggle('failed', Boolean(value?.failed));
+                row.querySelector('strong').textContent = text;
+              });
+              ariaValue += ' · ' + values.map(value => value.value).join(' · ');
+            } else {
+              const value = sample.dataset.chartValue || '--';
+              tooltip.querySelector('.chart-tooltip-value').textContent = value;
+              ariaValue += ' · ' + value;
+            }
+            target.setAttribute('aria-valuenow', String(currentIndex + 1));
+            target.setAttribute('aria-valuetext', ariaValue);
+            tooltip.hidden = false;
+            const svgBounds = svg.getBoundingClientRect();
+            const hostBounds = host.getBoundingClientRect();
+            const viewWidth = svg.viewBox.baseVal.width || 1;
+            const viewHeight = svg.viewBox.baseVal.height || 1;
+            const sampleClientX = svgBounds.left + x / viewWidth * svgBounds.width;
+            const sampleClientY = svgBounds.top + (Number.isFinite(y) ? y : viewHeight / 2) / viewHeight * svgBounds.height;
+            const pointerX = Number.isFinite(event?.clientX) ? event.clientX : sampleClientX;
+            const pointerY = Number.isFinite(event?.clientY) ? event.clientY : sampleClientY;
+            const scrollLeft = host.scrollLeft || 0;
+            const scrollTop = host.scrollTop || 0;
+            const anchorX = pointerX - hostBounds.left + scrollLeft;
+            const anchorY = pointerY - hostBounds.top + scrollTop;
+            const minimumLeft = scrollLeft + 4;
+            const maximumLeft = scrollLeft + host.clientWidth - tooltip.offsetWidth - 4;
+            let left = anchorX + 12;
+            if (left > maximumLeft) left = anchorX - tooltip.offsetWidth - 12;
+            left = Math.max(minimumLeft, Math.min(maximumLeft, left));
+            const minimumTop = scrollTop + 4;
+            const maximumTop = scrollTop + host.clientHeight - tooltip.offsetHeight - 4;
+            const top = Math.max(minimumTop, Math.min(maximumTop, anchorY - tooltip.offsetHeight / 2));
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+          };
+          const showNearest = event => {
+            const bounds = svg.getBoundingClientRect();
+            const viewWidth = svg.viewBox.baseVal.width || 1;
+            const pointerX = (event.clientX - bounds.left) / Math.max(1, bounds.width) * viewWidth;
+            let nearestIndex = 0;
+            let nearestDistance = Infinity;
+            samples.forEach((sample, index) => {
+              const distance = Math.abs(Number(sample.getAttribute('cx')) - pointerX);
+              if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestIndex = index;
+              }
+            });
+            showSample(nearestIndex, event);
+          };
+          target.addEventListener('pointerenter', showNearest);
+          target.addEventListener('pointermove', showNearest);
+          target.addEventListener('pointerdown', showNearest);
+          target.addEventListener('pointerleave', event => { if (event.pointerType !== 'touch') hide(); });
+          target.addEventListener('focus', () => showSample(currentIndex));
+          target.addEventListener('blur', hide);
+          target.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+              hide();
+              return;
+            }
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            showSample(currentIndex + (event.key === 'ArrowLeft' ? -1 : 1));
+          });
+        });
+      };
       const liveDetailSample = (data, admin) => {
         if (!data?.metrics_available && !data?.networks?.length) return null;
         const observedAt = Number(data.observed_at_unix_milli);
@@ -1412,6 +1523,7 @@
           const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
           if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, activeDetail.selectedCheckIDs);
         }
+        bindChartInteractions(activeDetail.body);
       };
       const bindServiceCheckControls = () => {
         if (!activeDetail?.admin) return;
@@ -1430,7 +1542,10 @@
             }
             activeDetail.selectedCheckIDs = selected;
             const serviceChart = activeDetail.body.querySelector('.service-check-chart-host');
-            if (serviceChart) serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, selected);
+            if (serviceChart) {
+              serviceChart.innerHTML = serviceCheckHistoryChart(activeDetail.node, activeDetail.samples, selected);
+              bindChartInteractions(serviceChart);
+            }
           };
         });
       };
@@ -1555,6 +1670,7 @@
             const samples = trimDetailSamples(result?.samples || []);
             const definitions = admin ? serviceCheckDefinitions(currentNode, samples) : [];
             activeDetail = { serial, nodeID: node.id, node: currentNode, admin, body, hours, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples, selectedCheckIDs: normalizeServiceCheckSelection(definitions, previousSelection) };
+            bindChartInteractions(body);
             const currentTitle = modal.querySelector('.modal-head h3');
             if (currentTitle) currentTitle.textContent = currentNode.name;
             if (admin) {
@@ -1818,6 +1934,7 @@
         hydrateMaps();
         bindPublicNodeCards();
         bindPrivateNodeCards();
+        bindChartInteractions();
         syncHomeLayout();
       };
       document.addEventListener('click', install, true);
