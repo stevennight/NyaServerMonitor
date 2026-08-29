@@ -20,7 +20,6 @@ func TestAdminServiceCheckHistoryUIIsEmbedded(t *testing.T) {
 		"packet_loss_percent",
 		"service-check-target",
 		"showsPacketLoss = selected.length === 1 && selected[0].type === 'ping'",
-		"HTTP/TCP 失败点标红",
 		"return selected.length ? selected : definitions.map(check => check.id)",
 	} {
 		if !strings.Contains(page, required) {
@@ -57,7 +56,7 @@ func TestNodeDetailChartsAndRefreshUIAreEmbedded(t *testing.T) {
 			t.Fatalf("node detail chart/refresh UI is missing %q", required)
 		}
 	}
-	for _, removed := range []string{"chart-readout-item", "service-chart-readout"} {
+	for _, removed := range []string{"chart-readout-item", "service-chart-readout", "service-chart-point", "service-chart-quality-point"} {
 		if strings.Contains(page, removed) {
 			t.Fatalf("node detail chart UI still contains obsolete readout %q", removed)
 		}
@@ -75,6 +74,7 @@ func TestPublicServiceCheckHistoryUIIsEmbedded(t *testing.T) {
 		"serviceCheckHistoryMarkup(currentNode, result?.samples || [], previousSelection)",
 		"const definitions = serviceCheckDefinitions(currentNode, samples)",
 		"window.nyasmReplaceStoredNode?.(node)",
+		"chart-hit-sample",
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("public service-check history UI is missing %q", required)
