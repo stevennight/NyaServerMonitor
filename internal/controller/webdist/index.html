@@ -394,6 +394,18 @@
     .service-chart-swatch{width:18px;height:3px;border-radius:2px;background:var(--blue)}
     .service-chart-swatch.quality{height:0;border-top:2px dashed var(--yellow);background:transparent}
     .service-chart-empty{min-height:260px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:7px;color:var(--muted)}
+    .chart-readout,.service-chart-readout{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px}
+    .chart-readout-item,.service-chart-readout-item{min-width:0;padding:8px 9px;border-left:2px solid var(--line);background:var(--theme-subtle-surface)}
+    .chart-readout-time,.service-chart-readout-time{display:block;color:var(--muted);font-size:10px;white-space:nowrap}
+    .chart-readout-value{display:block;margin-top:2px;color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .service-chart-readout-values{display:grid;gap:3px;margin-top:4px}
+    .service-chart-readout-value{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;color:var(--muted);font-size:10px}
+    .service-chart-readout-value span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .service-chart-readout-value strong{color:var(--text);font-size:11px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .service-chart-readout-value.failed strong{color:var(--red)}
+    .modal-wide{width:min(calc(100vw - 40px),1500px);height:calc(100vh - 40px);max-height:calc(100vh - 40px);display:flex;flex-direction:column;overflow:hidden}
+    .modal-wide .modal-head{position:sticky;top:0;z-index:3;flex:0 0 auto;background:var(--panel)}
+    .modal-wide .node-detail-modal-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
     @media(max-width:700px){
       .service-check-heading,.service-history-head{display:block}
       .service-check-selector{justify-content:flex-start;max-width:none;margin-top:12px}
@@ -402,6 +414,12 @@
       .service-check-result{grid-column:1/-1}
       .service-check-type{grid-column:2;grid-row:1}
       .service-check-chart-host{min-height:300px}
+      .chart-readout,.service-chart-readout{grid-template-columns:1fr;gap:5px}
+      .chart-readout-item,.service-chart-readout-item{padding:7px 6px}
+      .modal-backdrop:has(.modal-wide){padding:8px}
+      .modal-wide{width:calc(100vw - 16px);height:calc(100dvh - 16px);max-height:calc(100dvh - 16px)}
+      .modal-wide .modal-head{padding:14px 15px}
+      .modal-wide .node-detail-modal-body{padding:15px}
     }
   </style>
 </head>
@@ -1142,7 +1160,12 @@
           const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
           return `<circle class="chart-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.8"><title>${escapeChartText(timestamp)} · ${escapeChartText(formatter(values[index]))}</title></circle>`;
         }).join('');
-        return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg>`;
+        const readout = labelIndexes.map(index => {
+          const date = new Date(visible[index].observed_at);
+          const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
+          return `<div class="chart-readout-item"><span class="chart-readout-time">${escapeChartText(timestamp)}</span><strong class="chart-readout-value">${escapeChartText(formatter(values[index]))}</strong></div>`;
+        }).join('');
+        return `<svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="历史指标折线图"><g>${grid}${labels}</g><path class="chart-area" d="${areaPath}"></path><polyline class="chart-line" points="${pointString}"></polyline><g>${circles}</g></svg><div class="chart-readout" aria-label="可见时间刻度数值">${readout}</div>`;
       };
       const homeNetworkRateSamples = (samples, direction) => { const list = samples || []; return list.map((sample, index) => { const previous = list[index - 1]; if (!previous) return { ...sample, network_rate: 0 }; const current = (sample.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const prior = (previous.metrics?.networks || []).reduce((total, item) => total + Number(item[direction === 'in' ? 'bytes_in' : 'bytes_out'] || 0), 0); const elapsed = (new Date(sample.observed_at).getTime() - new Date(previous.observed_at).getTime()) / 1000; return { ...sample, network_rate: elapsed > 0 && current >= prior ? (current - prior) / elapsed : 0 }; }); };
       const detailStatusBadge = status => { const labels = { online: '在线', offline: '离线', pending: '待上报', revoked: '已撤销' }; const label = labels[status] || status || '--'; return `<span class="badge ${escapeChartText(status || '')}"><span class="mini-dot"></span>${escapeChartText(label)}</span>`; };
@@ -1208,6 +1231,7 @@
         const selection = normalizeServiceCheckSelection(definitions, selectedIDs);
         const selected = selection.map(id => definitions.find(check => check.id === id)).filter(Boolean);
         if (!selected.length) return '<div class="service-chart-empty">暂无可绘制的 HTTP、TCP 或 Ping 历史数据</div>';
+        const showsPacketLoss = selected.length === 1 && selected[0].type === 'ping';
         const source = (samples || []).filter(sample => selected.some(check => serviceCheckAt(sample, check.id)));
         if (!source.length) return '<div class="service-chart-empty">当前时间范围内暂无服务检查数据</div>';
         const limit = 180;
@@ -1215,7 +1239,7 @@
         const width = 900;
         const height = 238;
         const left = 52;
-        const right = selected.length === 1 ? 52 : 16;
+        const right = showsPacketLoss ? 52 : 16;
         const top = 14;
         const bottom = 32;
         const plotWidth = width - left - right;
@@ -1240,41 +1264,59 @@
         }).join('');
         let quality = '';
         let rightAxis = '';
-        if (selected.length === 1) {
+        if (showsPacketLoss) {
           const definition = selected[0];
           const points = visible.map((sample, index) => {
             const check = serviceCheckAt(sample, definition.id);
             if (!check) return null;
-            const value = definition.type === 'ping' ? Number(check.packet_loss_percent || 0) : check.status === 'up' ? 0 : 100;
+            const value = Number(check.packet_loss_percent || 0);
             return { check, sample, value, x: pointX(index), y: qualityY(value) };
           }).filter(Boolean);
           if (points.length) {
             const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
-            const circles = points.map(point => `<circle class="service-chart-quality-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.2"><title>${escapeChartText(`${new Date(point.sample.observed_at).toLocaleString()} · ${definition.type === 'ping' ? '丢包' : '探测失败'} ${point.value.toFixed(1)}%`)}</title></circle>`).join('');
+            const circles = points.map(point => `<circle class="service-chart-quality-point" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="2.2"><title>${escapeChartText(`${new Date(point.sample.observed_at).toLocaleString()} · 丢包 ${point.value.toFixed(1)}%`)}</title></circle>`).join('');
             quality = `<path class="service-chart-quality" d="${path}"></path>${circles}`;
             rightAxis = [100, 50, 0].map(value => { const y = qualityY(value); return `<text class="service-chart-axis" x="${width - right + 8}" y="${(y + 3).toFixed(2)}" text-anchor="start">${value}%</text>`; }).join('');
           }
         }
         const legend = selected.map((check, index) => `<span class="service-chart-legend-item"><span class="service-chart-swatch" style="background:${serviceChartPalette[index % serviceChartPalette.length]}"></span>${escapeChartText(check.name)} · ${escapeChartText(serviceCheckTypeLabel(check.type))}</span>`).join('');
-        const qualityLegend = selected.length === 1 ? `<span class="service-chart-legend-item"><span class="service-chart-swatch quality"></span>${selected[0].type === 'ping' ? '丢包率' : '探测失败'}</span>` : '';
+        const qualityLegend = showsPacketLoss ? '<span class="service-chart-legend-item"><span class="service-chart-swatch quality"></span>丢包率</span>' : '';
+        const readout = labelIndexes.map(index => {
+          const sample = visible[index];
+          const date = new Date(sample.observed_at);
+          const timestamp = Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
+          const values = selected.map((definition, seriesIndex) => {
+            const check = serviceCheckAt(sample, definition.id);
+            const failed = check && check.status !== 'up';
+            let result = '--';
+            if (check) {
+              result = `${Number(check.latency_ms || 0)} ms`;
+              if (definition.type === 'ping') result += ` · 丢包 ${Number(check.packet_loss_percent || 0).toFixed(1)}%`;
+              if (failed) result += ' · 失败';
+            }
+            const color = serviceChartPalette[seriesIndex % serviceChartPalette.length];
+            return `<div class="service-chart-readout-value${failed ? ' failed' : ''}"><span style="color:${color}" title="${escapeChartText(definition.name)}">${escapeChartText(definition.name)}</span><strong>${escapeChartText(result)}</strong></div>`;
+          }).join('');
+          return `<div class="service-chart-readout-item"><span class="service-chart-readout-time">${escapeChartText(timestamp)}</span><div class="service-chart-readout-values">${values}</div></div>`;
+        }).join('');
         const selectedPoints = visible.map(sample => serviceCheckAt(sample, selected[0].id)).filter(Boolean);
         const successful = selectedPoints.filter(check => check.status === 'up');
         const averageSource = successful.length ? successful : selectedPoints;
         const averageLatency = averageSource.length ? averageSource.reduce((sum, check) => sum + Number(check.latency_ms || 0), 0) / averageSource.length : 0;
         const availability = selectedPoints.length ? successful.length / selectedPoints.length * 100 : 0;
         const singleKPIs = selected.length === 1 ? `<span>平均耗时<strong>${averageLatency.toFixed(1)} ms</strong></span><span>可用率<strong>${availability.toFixed(1)}%</strong></span>${selected[0].type === 'ping' ? `<span>平均丢包<strong>${(selectedPoints.reduce((sum, check) => sum + Number(check.packet_loss_percent || 0), 0) / Math.max(1, selectedPoints.length)).toFixed(1)}%</strong></span>` : `<span>失败次数<strong>${selectedPoints.length - successful.length}</strong></span>`}` : `<span>对比检查<strong>${selected.length}</strong></span><span>历史采样<strong>${visible.length}</strong></span>`;
-        return `<div class="service-chart-kpis">${singleKPIs}</div><div class="service-chart-wrap"><svg class="service-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="服务检查耗时与质量历史图表"><g>${grid}${timeLabels}${rightAxis}</g><g>${lines}${quality}</g></svg></div><div class="service-chart-legend">${legend}${qualityLegend}</div>`;
+        return `<div class="service-chart-kpis">${singleKPIs}</div><div class="service-chart-wrap"><svg class="service-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="服务检查耗时与质量历史图表"><g>${grid}${timeLabels}${rightAxis}</g><g>${lines}${quality}</g></svg></div><div class="service-chart-readout" aria-label="可见时间刻度检查数值">${readout}</div><div class="service-chart-legend">${legend}${qualityLegend}</div>`;
       };
       const serviceCheckHistoryMarkup = (node, samples, selectedIDs) => {
         const definitions = serviceCheckDefinitions(node, samples);
         if (!definitions.length) return '';
         const selection = normalizeServiceCheckSelection(definitions, selectedIDs);
         const options = definitions.map(check => `<label class="service-check-option" title="${escapeChartText(check.target)}"><input type="checkbox" data-service-check-id="${escapeChartText(check.id)}"${selection.includes(check.id) ? ' checked' : ''}><span>${escapeChartText(check.name)}</span></label>`).join('');
-        return `<section class="service-history"><div class="service-history-head"><div><h4>服务检查历史</h4><p>单选显示耗时与丢包/失败，多选比较各检查耗时。</p></div><div class="service-check-selector" role="group" aria-label="选择服务检查">${options}</div></div><div class="service-check-chart-host">${serviceCheckHistoryChart(node, samples, selection)}</div></section>`;
+        return `<section class="service-history"><div class="service-history-head"><div><h4>服务检查历史</h4><p>单选 Ping 显示黄色丢包率线；HTTP/TCP 失败点标红；多选比较各检查耗时。</p></div><div class="service-check-selector" role="group" aria-label="选择服务检查">${options}</div></div><div class="service-check-chart-host">${serviceCheckHistoryChart(node, samples, selection)}</div></section>`;
       };
       const enhancedAdminDetailMarkup = (node, samples, selectedIDs) => {
         const id = escapeChartText(node.id);
-        return `<div class="node-detail"><div class="actions detail-actions"><label class="filter-select">范围<select id="metric-range"><option value="1">1 小时</option><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="168">7 天</option><option value="720">30 天</option></select></label><button class="btn small" id="edit-node">编辑信息</button><button class="btn small primary" id="install-node"${node.status === 'revoked' ? ' disabled' : ''}>生成安装命令</button><button class="btn small" id="update-node"${node.status === 'revoked' ? ' disabled' : ''}>下发更新</button><button class="btn small" id="rotate-token">轮换凭据</button>${node.status === 'revoked' ? '<button class="btn small" id="restore-node">恢复</button>' : '<button class="btn small danger" id="revoke-node">撤销</button>'}</div><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${id}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${escapeChartText(node.system?.hostname || '未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${escapeChartText([node.system?.os, node.system?.arch].filter(Boolean).join(' / ') || '--')}</div></div><div><div class="meta-label">展示 IP${node.ip_override ? ' · 手动' : ''}</div><div class="meta-value mono">${escapeChartText(node.ip_override || node.public_ipv4 || node.public_ipv6 || '--')}</div></div><div><div class="meta-label">出口 IPv4 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv4 || '--')}</div></div><div><div class="meta-label">出口 IPv6 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv6 || '--')}</div></div><div><div class="meta-label">本机网卡 IP</div><div class="meta-value mono">${escapeChartText(node.system?.ip || '--')}</div></div><div><div class="meta-label">国家/地区${node.country_override ? ' · 手动' : ''}</div><div class="meta-value">${detailCountryMarkup(node)}</div></div><div><div class="meta-label">状态</div><div class="meta-value">${detailStatusBadge(node.status)}</div></div></div><div class="history-grid">${adminHistoryMarkup(samples)}</div><section class="service-check-section"><div class="service-check-heading"><div><h4>当前服务检查</h4><p>目标地址仅在管理员视图展示。</p></div></div>${serviceCheckRowsMarkup(node)}</section>${serviceCheckHistoryMarkup(node, samples, selectedIDs)}</div>`;
+        return `<div class="node-detail"><div class="actions detail-actions"><label class="filter-select">范围<select id="metric-range"><option value="1">1 小时</option><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="168">7 天</option><option value="720">30 天</option></select></label><button class="btn small" id="edit-node">编辑信息</button><button class="btn small primary" id="install-node"${node.status === 'revoked' ? ' disabled' : ''}>生成安装命令</button><button class="btn small" id="update-node"${node.status === 'revoked' ? ' disabled' : ''}>下发更新</button><button class="btn small" id="rotate-token">轮换凭据</button>${node.status === 'revoked' ? '<button class="btn small" id="restore-node">恢复</button>' : '<button class="btn small danger" id="revoke-node">撤销</button>'}</div><div class="muted" style="margin-bottom:16px">安装命令只读取当前 token，不会轮换凭据；历史指标由 controller 按时间范围降采样。</div><div class="detail-meta"><div><div class="meta-label">节点 ID</div><div class="meta-value mono">${id}</div></div><div><div class="meta-label">主机</div><div class="meta-value">${escapeChartText(node.system?.hostname || '未上报')}</div></div><div><div class="meta-label">操作系统</div><div class="meta-value">${escapeChartText([node.system?.os, node.system?.arch].filter(Boolean).join(' / ') || '--')}</div></div><div><div class="meta-label">展示 IP${node.ip_override ? ' · 手动' : ''}</div><div class="meta-value mono">${escapeChartText(node.ip_override || node.public_ipv4 || node.public_ipv6 || '--')}</div></div><div><div class="meta-label">出口 IPv4 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv4 || '--')}</div></div><div><div class="meta-label">出口 IPv6 · 自动</div><div class="meta-value mono">${escapeChartText(node.public_ipv6 || '--')}</div></div><div><div class="meta-label">本机网卡 IP</div><div class="meta-value mono">${escapeChartText(node.system?.ip || '--')}</div></div><div><div class="meta-label">国家/地区${node.country_override ? ' · 手动' : ''}</div><div class="meta-value">${detailCountryMarkup(node)}</div></div><div><div class="meta-label">状态</div><div class="meta-value">${detailStatusBadge(node.status)}</div></div></div><div class="history-grid">${adminHistoryMarkup(samples)}</div><section class="service-check-section"><div class="service-check-heading"><div><h4>当前服务检查</h4><p>随节点上报周期执行（默认 15 秒）；目标地址仅在管理员视图展示。</p></div></div><div class="service-check-current-host">${serviceCheckRowsMarkup(node)}</div></section><div class="service-history-host">${serviceCheckHistoryMarkup(node, samples, selectedIDs)}</div></div>`;
       };
       const publicDetailMarkup = (node, samples) => {
         const tags = (node.tags || []).map(tag => `<span class="public-node-tag">${escapeChartText(tag)}</span>`).join('');
@@ -1325,8 +1367,15 @@
       }
       const detailSampleLimit = 480;
       const detailDefaultResolutionSeconds = 60;
+      const detailRefreshIntervalMillis = 15000;
       let detailModalSerial = 0;
       let activeDetail = null;
+      let detailRefreshTimer = null;
+      let detailRefreshInFlight = false;
+      const stopDetailRefresh = () => {
+        if (detailRefreshTimer !== null) clearInterval(detailRefreshTimer);
+        detailRefreshTimer = null;
+      };
       const detailSampleTime = sample => Date.parse(sample?.observed_at);
       const trimDetailSamples = samples => (samples || []).filter(sample => Number.isFinite(detailSampleTime(sample))).sort((left, right) => detailSampleTime(left) - detailSampleTime(right)).slice(-detailSampleLimit);
       const detailSampleBucket = (sample, resolutionSeconds) => Math.floor(detailSampleTime(sample) / (Math.max(1, Number(resolutionSeconds) || detailDefaultResolutionSeconds) * 1000));
@@ -1385,6 +1434,53 @@
           };
         });
       };
+      const replaceStoredNode = node => {
+        const replace = nodes => {
+          const index = (nodes || []).findIndex(item => item.id === node.id);
+          if (index >= 0) nodes[index] = node;
+        };
+        replace(state.nodes);
+        replace(state.dashboard?.nodes);
+        if (state.selected?.id === node.id) state.selected = node;
+      };
+      const refreshAdminDetail = async () => {
+        const detail = activeDetail;
+        if (!detail?.admin || !detail.body?.isConnected || detailRefreshInFlight) return;
+        detailRefreshInFlight = true;
+        try {
+          const id = encodeURIComponent(detail.nodeID);
+          const hours = Number(detail.hours) || 24;
+          const [node, result] = await Promise.all([
+            request('/api/nodes/' + id),
+            request('/api/nodes/' + id + '/metrics?hours=' + hours + '&limit=2000')
+          ]);
+          if (activeDetail !== detail || detail.serial !== detailModalSerial || !detail.body.isConnected) return;
+          const samples = trimDetailSamples(result?.samples || []);
+          const definitions = serviceCheckDefinitions(node, samples);
+          detail.node = node;
+          detail.samples = samples;
+          detail.resolutionSeconds = Number(result?.resolution_seconds) || detailDefaultResolutionSeconds;
+          detail.selectedCheckIDs = normalizeServiceCheckSelection(definitions, detail.selectedCheckIDs);
+          replaceStoredNode(node);
+          const title = detail.body.closest('.modal')?.querySelector('.modal-head h3');
+          if (title) title.textContent = node.name;
+          const currentChecks = detail.body.querySelector('.service-check-current-host');
+          if (currentChecks) currentChecks.innerHTML = serviceCheckRowsMarkup(node);
+          const history = detail.body.querySelector('.service-history-host');
+          if (history) history.innerHTML = serviceCheckHistoryMarkup(node, samples, detail.selectedCheckIDs);
+          refreshActiveDetailCharts();
+          bindServiceCheckControls();
+        } catch (_) {
+          // Keep the last successful detail view during transient refresh failures.
+        } finally {
+          detailRefreshInFlight = false;
+        }
+      };
+      const startDetailRefresh = () => {
+        stopDetailRefresh();
+        if (!activeDetail?.admin) return;
+        detailRefreshTimer = setInterval(() => { void refreshAdminDetail(); }, detailRefreshIntervalMillis);
+      };
       window.nyasmUpdateDetailSamples = (samples, resolutionSeconds) => {
         if (!activeDetail?.admin) return;
         if (Number.isFinite(Number(resolutionSeconds)) && Number(resolutionSeconds) > 0) activeDetail.resolutionSeconds = Number(resolutionSeconds);
@@ -1416,6 +1512,8 @@
       const showNodeDetail = async (node, admin) => {
         if (!node?.id) return;
         const serial = ++detailModalSerial;
+        stopDetailRefresh();
+        activeDetail = null;
         document.querySelector('.modal-backdrop')?.remove();
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
@@ -1425,30 +1523,40 @@
         modal.innerHTML = `<header class="modal-head"><h3>${title}</h3><button class="close" type="button" aria-label="关闭">×</button></header><div class="modal-body node-detail-modal-body"><div class="empty">正在加载历史指标...</div></div>`;
         backdrop.append(modal);
         document.body.append(backdrop);
-        const close = () => { if (serial === detailModalSerial) { activeDetail = null; backdrop.remove(); } };
+        const close = () => {
+          if (serial !== detailModalSerial) return;
+          detailModalSerial++;
+          stopDetailRefresh();
+          activeDetail = null;
+          backdrop.remove();
+        };
         modal.querySelector('.close').onclick = close;
         backdrop.onclick = event => { if (event.target === backdrop) close(); };
         const body = modal.querySelector('.node-detail-modal-body');
         const load = async hours => {
+          stopDetailRefresh();
           const previousSelection = activeDetail?.nodeID === node.id ? activeDetail.selectedCheckIDs : null;
           body.innerHTML = '<div class="empty">正在加载历史指标...</div>';
           try {
             const path = admin ? '/api/nodes/' + encodeURIComponent(node.id) + '/metrics?hours=' + hours + '&limit=2000' : '/api/public/nodes/' + encodeURIComponent(node.id) + '/metrics?hours=' + hours + '&limit=500';
-            const result = await request(path);
+            const [currentNode, result] = admin ? await Promise.all([request('/api/nodes/' + encodeURIComponent(node.id)), request(path)]) : [node, await request(path)];
             if (serial !== detailModalSerial) return;
-            body.innerHTML = admin ? enhancedAdminDetailMarkup(node, result?.samples || [], previousSelection) : publicDetailMarkup(node, result?.samples || []);
+            body.innerHTML = admin ? enhancedAdminDetailMarkup(currentNode, result?.samples || [], previousSelection) : publicDetailMarkup(currentNode, result?.samples || []);
             if (admin) {
               const chart=body.querySelector('.history-grid');
               if (chart) chart.innerHTML=adminHistoryMarkup(result?.samples || []);
               const meta=body.querySelector('.detail-meta');
-              if (meta) meta.insertAdjacentHTML('beforeend',adminDetailExtraMarkup(node));
+              if (meta) meta.insertAdjacentHTML('beforeend',adminDetailExtraMarkup(currentNode));
+              replaceStoredNode(currentNode);
             } else {
               const meta=body.querySelector('.public-detail-meta');
-              if (meta) meta.insertAdjacentHTML('beforeend',publicDetailExtraMarkup(node));
+              if (meta) meta.insertAdjacentHTML('beforeend',publicDetailExtraMarkup(currentNode));
             }
             const samples = trimDetailSamples(result?.samples || []);
-            const definitions = admin ? serviceCheckDefinitions(node, samples) : [];
-            activeDetail = { serial, nodeID: node.id, node, admin, body, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples, selectedCheckIDs: normalizeServiceCheckSelection(definitions, previousSelection) };
+            const definitions = admin ? serviceCheckDefinitions(currentNode, samples) : [];
+            activeDetail = { serial, nodeID: node.id, node: currentNode, admin, body, hours, resolutionSeconds: Number(result?.resolution_seconds) || detailDefaultResolutionSeconds, samples, selectedCheckIDs: normalizeServiceCheckSelection(definitions, previousSelection) };
+            const currentTitle = modal.querySelector('.modal-head h3');
+            if (currentTitle) currentTitle.textContent = currentNode.name;
             if (admin) {
               bindServiceCheckControls();
               const range = body.querySelector('#metric-range');
@@ -1460,6 +1568,7 @@
               const action = revoke ? 'revoke' : 'restore';
               const actionButton = revoke || restore;
               if (actionButton) actionButton.onclick = async () => { if (!window.confirm((action === 'revoke' ? '撤销' : '恢复') + '节点 ' + node.name + '？')) return; try { await request('/api/nodes/' + encodeURIComponent(node.id) + '/' + action, { method: 'POST' }); close(); window.location.reload(); } catch (error) { window.alert(error.message); } };
+              startDetailRefresh();
             }
           } catch (error) {
             if (serial === detailModalSerial) body.innerHTML = '<div class="empty">历史指标加载失败：' + escapeChartText(error.message) + '</div>';
