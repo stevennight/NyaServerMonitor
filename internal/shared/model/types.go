@@ -215,7 +215,6 @@ type Dashboard struct {
 	TotalNodes      int          `json:"total_nodes"`
 	OnlineNodes     int          `json:"online_nodes"`
 	OfflineNodes    int          `json:"offline_nodes"`
-	RevokedNodes    int          `json:"revoked_nodes"`
 	DegradedChecks  int          `json:"degraded_checks"`
 	ActiveAlerts    int          `json:"active_alerts"`
 	SiteName        string       `json:"site_name"`

@@ -99,6 +99,42 @@ func TestNodeReportRoundTripAndRevoke(t *testing.T) {
 	if err := st.UpdateReport(ctx, report); err != ErrNodeRevoked {
 		t.Fatalf("expected revoked error, got %v", err)
 	}
+
+	// Revoked nodes are treated as soft-deleted: ListNodes must not return
+	// them, and only the dedicated ListRevokedNodes entry point should.
+	active, err := st.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range active {
+		if n.ID == node.ID {
+			t.Fatalf("ListNodes returned revoked node %q", node.ID)
+		}
+	}
+	revoked, err := st.ListRevokedNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0].ID != node.ID || revoked[0].Status != model.NodeRevoked {
+		t.Fatalf("unexpected revoked nodes: %#v", revoked)
+	}
+
+	if err := st.SetNodeRevoked(ctx, node.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	active, err = st.ListNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range active {
+		if n.ID == node.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ListNodes did not return restored node %q", node.ID)
+	}
 }
 
 func TestUpdateNodeMetadata(t *testing.T) {

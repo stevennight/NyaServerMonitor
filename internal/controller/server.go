@@ -483,8 +483,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, session
 			dashboard.OnlineNodes++
 		case model.NodeOffline:
 			dashboard.OfflineNodes++
-		case model.NodeRevoked:
-			dashboard.RevokedNodes++
 		}
 		for _, check := range node.Checks {
 			if check.Status != "up" {
@@ -649,7 +647,7 @@ func (s *Server) handlePublicNodeMetrics(w http.ResponseWriter, r *http.Request)
 	}
 	var node model.Node
 	for _, candidate := range nodes {
-		if candidate.Status != model.NodeRevoked && publicNodeID(candidate.ID) == r.PathValue("id") {
+		if publicNodeID(candidate.ID) == r.PathValue("id") {
 			node = candidate
 			break
 		}
@@ -1289,7 +1287,17 @@ func (s *Server) handleUpdateNodeMetadata(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request, session auth.Session) {
 	_ = s.store.MarkOffline(r.Context(), time.Now().UTC().Add(-s.cfg.OfflineAfter))
-	nodes, err := s.store.ListNodes(r.Context())
+	var (
+		nodes []model.Node
+		err   error
+	)
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("status")), "revoked") {
+		// Dedicated entry point for the admin's revoked-nodes view. Revoked
+		// nodes are otherwise treated as soft-deleted and never returned.
+		nodes, err = s.store.ListRevokedNodes(r.Context())
+	} else {
+		nodes, err = s.store.ListNodes(r.Context())
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "unable to load nodes")
 		return
