@@ -203,6 +203,104 @@ func TestPublicDashboardOmitsSensitiveNodeDetails(t *testing.T) {
 	}
 }
 
+// TestRevokedNodesAreHiddenByDefaultAndOnlyExposedThroughDedicatedEntryPoint
+// asserts the "revoke == soft delete" contract: revoked nodes never appear in
+// the admin dashboard or default node list, and are only reachable through
+// the explicit GET /api/nodes?status=revoked entry point (or by ID).
+func TestRevokedNodesAreHiddenByDefaultAndOnlyExposedThroughDedicatedEntryPoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/revoked.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.CreateNode(ctx, model.Node{ID: "node_active", Name: "Active node", Status: model.NodePending}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateNode(ctx, model.Node{ID: "node_revoked", Name: "Revoked node", Status: model.NodePending}, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNodeRevoked(ctx, "node_revoked", true); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewServer(Config{PublicURL: "http://127.0.0.1:8080", SessionLifetime: time.Hour, OfflineAfter: time.Minute, CleanupInterval: time.Minute, MetricsRetention: time.Hour}, st)
+	setupRequest := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(`{"username":"admin","password":"correct-horse-battery-staple"}`))
+	setupRequest.Header.Set("Content-Type", "application/json")
+	setupResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(setupResponse, setupRequest)
+	if setupResponse.Code != http.StatusCreated {
+		t.Fatalf("setup status: %d %s", setupResponse.Code, setupResponse.Body.String())
+	}
+	cookies := setupResponse.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one session cookie, got %d", len(cookies))
+	}
+
+	dashboardRequest := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
+	dashboardRequest.AddCookie(cookies[0])
+	dashboardResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(dashboardResponse, dashboardRequest)
+	if dashboardResponse.Code != http.StatusOK {
+		t.Fatalf("dashboard status: %d %s", dashboardResponse.Code, dashboardResponse.Body.String())
+	}
+	var dashboard model.Dashboard
+	if err := json.Unmarshal(dashboardResponse.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.TotalNodes != 1 || len(dashboard.Nodes) != 1 || dashboard.Nodes[0].ID != "node_active" {
+		t.Fatalf("dashboard should omit revoked node: %#v", dashboard)
+	}
+	if strings.Contains(dashboardResponse.Body.String(), "node_revoked") {
+		t.Fatalf("dashboard body leaked revoked node: %s", dashboardResponse.Body.String())
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)
+	listRequest.AddCookie(cookies[0])
+	listResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("node list status: %d %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listBody struct {
+		Nodes []model.Node `json:"nodes"`
+	}
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(listBody.Nodes) != 1 || listBody.Nodes[0].ID != "node_active" {
+		t.Fatalf("default node list should omit revoked node: %#v", listBody.Nodes)
+	}
+
+	revokedListRequest := httptest.NewRequest(http.MethodGet, "/api/nodes?status=revoked", nil)
+	revokedListRequest.AddCookie(cookies[0])
+	revokedListResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(revokedListResponse, revokedListRequest)
+	if revokedListResponse.Code != http.StatusOK {
+		t.Fatalf("revoked node list status: %d %s", revokedListResponse.Code, revokedListResponse.Body.String())
+	}
+	var revokedListBody struct {
+		Nodes []model.Node `json:"nodes"`
+	}
+	if err := json.Unmarshal(revokedListResponse.Body.Bytes(), &revokedListBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(revokedListBody.Nodes) != 1 || revokedListBody.Nodes[0].ID != "node_revoked" || revokedListBody.Nodes[0].Status != model.NodeRevoked {
+		t.Fatalf("revoked entry point should return exactly the revoked node: %#v", revokedListBody.Nodes)
+	}
+
+	// Direct-by-ID lookup must still work regardless of revocation, so the
+	// admin can open the node's detail view (and restore it) from the
+	// dedicated entry point.
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/nodes/node_revoked", nil)
+	getRequest.AddCookie(cookies[0])
+	getResponse := httptest.NewRecorder()
+	s.mux.ServeHTTP(getResponse, getRequest)
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("get revoked node by id status: %d %s", getResponse.Code, getResponse.Body.String())
+	}
+}
+
 func TestAdminSessionSurvivesRestartAndLogoutRevokesIt(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/persistent-session.db"

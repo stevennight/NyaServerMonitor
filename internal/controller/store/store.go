@@ -633,14 +633,27 @@ func (s *Store) GetNodeCredential(ctx context.Context, id string) (NodeCredentia
 	return NodeCredential{Node: record.Node, TokenHash: record.TokenHash, TokenCiphertext: record.TokenCiphertext, Revoked: record.Revoked}, nil
 }
 
+// ListNodes returns every active (non-revoked) node. Revoked nodes are treated
+// as soft-deleted and are excluded here; use ListRevokedNodes for the
+// dedicated "revoked nodes" management entry point.
 func (s *Store) ListNodes(ctx context.Context) ([]model.Node, error) {
+	return s.listNodes(ctx, "WHERE revoked = 0")
+}
+
+// ListRevokedNodes returns only revoked nodes, for the admin's dedicated
+// revoked-nodes view (inspect details, restore).
+func (s *Store) ListRevokedNodes(ctx context.Context) ([]model.Node, error) {
+	return s.listNodes(ctx, "WHERE revoked = 1")
+}
+
+func (s *Store) listNodes(ctx context.Context, where string) ([]model.Node, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, group_name, tags_json, token_hash, token_ciphertext, status, revoked, agent_version, last_ip,
 		       public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
 		       country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
 		       desired_version, update_status, update_error, update_requested_at, update_finished_at
-		FROM nodes ORDER BY name COLLATE NOCASE, id`)
+		FROM nodes `+where+` ORDER BY name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, err
 	}
