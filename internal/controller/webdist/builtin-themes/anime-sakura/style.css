@@ -1,14 +1,19 @@
 html[data-theme-pack="anime-sakura"]{
   color-scheme:light;
   --app-font:'Nunito','Segoe UI',ui-rounded,-apple-system,sans-serif;
-  --app-bg-image:radial-gradient(circle at 15% 10%, rgba(255,182,224,.4), transparent 50%), radial-gradient(circle at 85% 90%, rgba(191,166,255,.35), transparent 50%);
+  --app-bg-image:radial-gradient(circle at 15% 10%, rgba(255,170,220,.55), transparent 48%), radial-gradient(circle at 85% 90%, rgba(191,166,255,.48), transparent 48%), radial-gradient(circle at 50% 45%, rgba(255,214,235,.3), transparent 60%);
+  --app-overlay-image:radial-gradient(circle, rgba(239,106,138,.4) 1.6px, transparent 2.2px);
+  --app-overlay-size:20px 20px;
+  --app-overlay-opacity:.55;
+  --app-overlay-blend:normal;
+  --app-heading-glow:0 0 16px rgba(239,106,138,.4);
   --bg:#fdf3fb;
   --panel:#ffffff;
   --panel-2:#fbe4f4;
   --line:#f0c4e4;
   --text:#3a1f38;
   --muted:#8a6289;
-  --green:#63c19a;
+  --green:#7ab06a;
   --yellow:#e6a23c;
   --red:#ef6a8a;
   --blue:#9b7ce8;

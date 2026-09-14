@@ -1,7 +1,12 @@
 html[data-theme-pack="galaxy-space"]{
   color-scheme:dark;
   --app-font:'Inter','Segoe UI',ui-sans-serif,system-ui,-apple-system,sans-serif;
-  --app-bg-image:radial-gradient(circle at 15% 20%, rgba(242,193,78,.12), transparent 40%), radial-gradient(circle at 80% 15%, rgba(111,168,255,.16), transparent 45%), radial-gradient(circle at 60% 85%, rgba(154,113,255,.16), transparent 50%);
+  --app-bg-image:radial-gradient(circle at 15% 20%, rgba(242,193,78,.2), transparent 40%), radial-gradient(circle at 80% 15%, rgba(111,168,255,.26), transparent 45%), radial-gradient(circle at 60% 85%, rgba(154,113,255,.26), transparent 50%), radial-gradient(1px 1px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 75% 60%, #fff, transparent), radial-gradient(1px 1px at 40% 80%, #fff, transparent), radial-gradient(1px 1px at 90% 20%, #fff, transparent), radial-gradient(1px 1px at 55% 10%, #fff, transparent);
+  --app-overlay-image:radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,.9), transparent), radial-gradient(1px 1px at 30% 65%, rgba(255,255,255,.8), transparent), radial-gradient(1px 1px at 60% 25%, rgba(255,255,255,.85), transparent), radial-gradient(1px 1px at 85% 75%, rgba(255,255,255,.75), transparent), radial-gradient(1px 1px at 95% 40%, rgba(255,255,255,.8), transparent), radial-gradient(1px 1px at 45% 90%, rgba(255,255,255,.7), transparent);
+  --app-overlay-size:cover;
+  --app-overlay-opacity:.8;
+  --app-overlay-blend:screen;
+  --app-heading-glow:0 0 12px rgba(111,168,255,.65), 0 0 26px rgba(154,113,255,.3);
   --bg:#090816;
   --panel:#12102a;
   --panel-2:#191536;

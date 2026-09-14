@@ -1,7 +1,12 @@
 html[data-theme-pack="cyberpunk-neon"]{
   color-scheme:dark;
   --app-font:'Rajdhani','Segoe UI',ui-sans-serif,system-ui,sans-serif;
-  --app-bg-image:radial-gradient(circle at 20% 20%, rgba(255,79,201,.18), transparent 45%), radial-gradient(circle at 80% 80%, rgba(53,230,255,.14), transparent 45%);
+  --app-bg-image:radial-gradient(circle at 20% 20%, rgba(255,79,201,.28), transparent 45%), radial-gradient(circle at 80% 80%, rgba(53,230,255,.22), transparent 45%), repeating-linear-gradient(0deg, rgba(255,79,201,.05) 0px, rgba(255,79,201,.05) 1px, transparent 1px, transparent 4px);
+  --app-overlay-image:linear-gradient(rgba(53,230,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,79,201,.06) 1px, transparent 1px), radial-gradient(ellipse at center, transparent 55%, rgba(4,2,10,.55) 100%);
+  --app-overlay-size:28px 28px;
+  --app-overlay-opacity:.7;
+  --app-overlay-blend:screen;
+  --app-heading-glow:0 0 10px rgba(255,79,201,.8), 0 0 22px rgba(53,230,255,.4);
   --bg:#0a0714;
   --panel:#140f24;
   --panel-2:#1c1533;

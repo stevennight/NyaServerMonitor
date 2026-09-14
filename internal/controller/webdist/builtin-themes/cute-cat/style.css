@@ -1,14 +1,19 @@
 html[data-theme-pack="cute-cat"]{
   color-scheme:light;
   --app-font:'Nunito','Segoe UI',ui-rounded,-apple-system,sans-serif;
-  --app-bg-image:radial-gradient(circle at 10% 15%, rgba(255,199,140,.3), transparent 45%), radial-gradient(circle at 90% 85%, rgba(255,222,180,.35), transparent 45%);
+  --app-bg-image:radial-gradient(circle at 10% 15%, rgba(255,188,120,.42), transparent 44%), radial-gradient(circle at 90% 85%, rgba(255,210,160,.42), transparent 44%);
+  --app-overlay-image:radial-gradient(circle, rgba(224,112,74,.32) 1.2px, transparent 1.8px);
+  --app-overlay-size:16px 16px;
+  --app-overlay-opacity:.5;
+  --app-overlay-blend:normal;
+  --app-heading-glow:none;
   --bg:#fff8f1;
   --panel:#ffffff;
   --panel-2:#ffefdd;
   --line:#f4d9b8;
   --text:#402c1c;
   --muted:#93765c;
-  --green:#7cb87f;
+  --green:#8aab5c;
   --yellow:#e2963a;
   --red:#e0704a;
   --blue:#6fa8b5;

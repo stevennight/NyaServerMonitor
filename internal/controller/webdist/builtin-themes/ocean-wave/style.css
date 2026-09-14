@@ -1,7 +1,12 @@
 html[data-theme-pack="ocean-wave"]{
   color-scheme:dark;
   --app-font:'Inter','Segoe UI',ui-sans-serif,system-ui,-apple-system,sans-serif;
-  --app-bg-image:radial-gradient(circle at 20% 15%, rgba(79,199,232,.14), transparent 50%), radial-gradient(circle at 80% 85%, rgba(60,214,160,.1), transparent 50%);
+  --app-bg-image:radial-gradient(circle at 20% 15%, rgba(79,199,232,.26), transparent 50%), radial-gradient(circle at 80% 85%, rgba(60,214,160,.2), transparent 50%), repeating-linear-gradient(180deg, rgba(79,199,232,.05) 0px, rgba(79,199,232,.05) 2px, transparent 2px, transparent 10px);
+  --app-overlay-image:radial-gradient(circle, rgba(79,199,232,.22) 1.4px, transparent 2px), radial-gradient(ellipse at 50% 100%, rgba(6,20,28,.5), transparent 60%);
+  --app-overlay-size:22px 22px;
+  --app-overlay-opacity:.6;
+  --app-overlay-blend:screen;
+  --app-heading-glow:0 0 12px rgba(79,199,232,.6);
   --bg:#06141c;
   --panel:#0b222e;
   --panel-2:#0f2c3a;

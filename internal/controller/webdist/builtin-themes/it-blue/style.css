@@ -2,6 +2,11 @@ html[data-theme-pack="it-blue"]{
   color-scheme:light;
   --app-font:'Inter','Segoe UI',ui-sans-serif,system-ui,-apple-system,sans-serif;
   --app-bg-image:none;
+  --app-overlay-image:linear-gradient(rgba(28,111,214,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(28,111,214,.05) 1px, transparent 1px);
+  --app-overlay-size:24px 24px;
+  --app-overlay-opacity:1;
+  --app-overlay-blend:normal;
+  --app-heading-glow:none;
   --bg:#f3f6fa;
   --panel:#ffffff;
   --panel-2:#e8eef6;

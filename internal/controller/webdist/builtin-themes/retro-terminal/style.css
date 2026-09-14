@@ -1,14 +1,19 @@
 html[data-theme-pack="retro-terminal"]{
   color-scheme:dark;
   --app-font:'JetBrains Mono','Courier New',ui-monospace,Consolas,monospace;
-  --app-bg-image:repeating-linear-gradient(0deg, rgba(255,191,89,.05) 0px, rgba(255,191,89,.05) 1px, transparent 1px, transparent 3px);
+  --app-bg-image:radial-gradient(ellipse at center, transparent 42%, rgba(10,5,0,.62) 100%), repeating-linear-gradient(0deg, rgba(255,191,89,.09) 0px, rgba(255,191,89,.09) 1px, transparent 1px, transparent 3px);
+  --app-overlay-image:repeating-linear-gradient(0deg, rgba(0,0,0,.3) 0px, rgba(0,0,0,.3) 1px, transparent 2px, transparent 4px), radial-gradient(ellipse at center, transparent 50%, rgba(10,5,0,.55) 100%);
+  --app-overlay-size:cover;
+  --app-overlay-opacity:.55;
+  --app-overlay-blend:multiply;
+  --app-heading-glow:0 0 10px rgba(255,184,51,.85), 0 0 24px rgba(255,184,51,.4);
   --bg:#120b02;
   --panel:#1c1206;
   --panel-2:#241906;
   --line:#4a3410;
   --text:#ffcf6b;
   --muted:#b08a3f;
-  --green:#8fd96a;
+  --green:#c3d65c;
   --yellow:#ffb833;
   --red:#ff6a4d;
   --blue:#ffdf9e;

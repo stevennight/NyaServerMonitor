@@ -1,7 +1,12 @@
 html[data-theme-pack="forest-critter"]{
   color-scheme:light;
   --app-font:'Nunito','Segoe UI',ui-rounded,-apple-system,sans-serif;
-  --app-bg-image:radial-gradient(circle at 12% 12%, rgba(153,196,120,.28), transparent 45%), radial-gradient(circle at 88% 88%, rgba(180,150,100,.2), transparent 45%);
+  --app-bg-image:radial-gradient(circle at 12% 12%, rgba(140,190,100,.4), transparent 42%), radial-gradient(circle at 88% 88%, rgba(180,140,90,.32), transparent 42%), radial-gradient(circle at 50% 100%, rgba(90,140,70,.18), transparent 55%);
+  --app-overlay-image:radial-gradient(circle, rgba(79,148,87,.28) 1.4px, transparent 2px);
+  --app-overlay-size:18px 18px;
+  --app-overlay-opacity:.55;
+  --app-overlay-blend:normal;
+  --app-heading-glow:none;
   --bg:#f6f7ee;
   --panel:#ffffff;
   --panel-2:#e9edd8;

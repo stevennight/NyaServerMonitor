@@ -37,7 +37,13 @@ data/theme/my-theme/
 html[data-theme-pack="my-theme"]{
   color-scheme: dark; /* 或 light */
   --app-font: ...;      /* 可选：整体字体 */
-  --app-bg-image: ...;  /* 可选：body 背景（渐变/纹理，无需图片文件） */
+  --app-bg-image: ...;  /* 可选：body 背景（渐变/纹理，无需图片文件，会随内容滚动固定） */
+  --app-overlay-image: ...;  /* 可选：铺在所有卡片/面板之上的全屏纹理（扫描线、噪点、星空等），
+                                 z-index 在弹窗（10）和提示条（20）之下，不挡点击 */
+  --app-overlay-size: cover;    /* 可选：纹理平铺尺寸，如 "16px 16px"（配合小圆点/网格纹理用） */
+  --app-overlay-opacity: .5;    /* 可选：纹理不透明度，0-1 */
+  --app-overlay-blend: normal;  /* 可选：纹理混合模式，如 multiply/screen/soft-light */
+  --app-heading-glow: ...;      /* 可选：标题和品牌图标的 text-shadow 发光效果 */
   --bg: ...; --panel: ...; --panel-2: ...; --line: ...; --text: ...; --muted: ...;
   --green: ...; --yellow: ...; --red: ...; --blue: ...; --shadow: ...;
   --theme-side-bg: ...; --theme-header-bg: ...; --theme-input-bg: ...; --theme-track: ...;

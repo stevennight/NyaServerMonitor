@@ -1,7 +1,12 @@
 html[data-theme-pack="hacker-matrix"]{
   color-scheme:dark;
   --app-font:'Cascadia Code','Consolas','SFMono-Regular',ui-monospace,Menlo,monospace;
-  --app-bg-image:repeating-linear-gradient(0deg, rgba(0,255,106,.035) 0px, rgba(0,255,106,.035) 1px, transparent 1px, transparent 3px);
+  --app-bg-image:radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.55) 100%), repeating-linear-gradient(0deg, rgba(0,255,106,.07) 0px, rgba(0,255,106,.07) 1px, transparent 1px, transparent 3px);
+  --app-overlay-image:repeating-linear-gradient(0deg, rgba(0,0,0,.3) 0px, rgba(0,0,0,.3) 1px, transparent 2px, transparent 4px), radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+  --app-overlay-size:cover;
+  --app-overlay-opacity:.55;
+  --app-overlay-blend:multiply;
+  --app-heading-glow:0 0 10px rgba(0,255,106,.85), 0 0 24px rgba(0,255,106,.4);
   --bg:#010a02;
   --panel:#05140a;
   --panel-2:#081d0f;
