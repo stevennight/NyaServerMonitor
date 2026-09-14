@@ -135,12 +135,18 @@ func Run(ctx context.Context, args []string) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(cfg.ThemeDir, 0o755); err != nil {
+		return err
+	}
 	st, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	s := NewServer(cfg, st)
+	if err := seedBuiltinThemes(cfg.ThemeDir); err != nil {
+		s.log.Warn("seed builtin themes failed", "error", err)
+	}
 	if err := s.queueAllNodeGeoLookups(ctx); err != nil {
 		s.log.Warn("queue geo lookups on startup failed", "error", err)
 	}
@@ -216,6 +222,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/node/ws", s.withNode(s.handleNodeWS))
 	s.mux.HandleFunc("GET /assets/flags/{code}", s.handleFlagAsset)
 	s.mux.HandleFunc("GET /assets/world-map.svg", s.handleWorldMapAsset)
+	s.mux.HandleFunc("GET /api/themes", s.handleListThemes)
+	s.mux.HandleFunc("GET /themes/{id}/{path...}", s.handleThemeAsset)
 	// Reports remain a signed, durable data endpoint. The node WebSocket carries
 	// heartbeats, live telemetry, and the fixed signed update message.
 	s.mux.HandleFunc("POST "+reportPath, s.handleAgentReport)

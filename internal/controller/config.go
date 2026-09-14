@@ -13,6 +13,7 @@ type Config struct {
 	ListenAddr       string
 	DataDir          string
 	DBPath           string
+	ThemeDir         string
 	PublicURL        string
 	NodeBinaryPath   string
 	NodeBinaryDir    string
@@ -61,6 +62,7 @@ func parseConfig(args []string) (Config, error) {
 	}
 	cfg.DataDir = filepath.Clean(cfg.DataDir)
 	cfg.DBPath = filepath.Join(cfg.DataDir, "nyasm.db")
+	cfg.ThemeDir = filepath.Join(cfg.DataDir, "theme")
 	if cfg.SessionLifetime < 15*time.Minute || cfg.SessionLifetime > 30*24*time.Hour {
 		return Config{}, errors.New("session-lifetime must be between 15m and 30d")
 	}
