@@ -32,6 +32,7 @@ type Node struct {
 	Latitude          float64          `json:"latitude,omitempty"`
 	Longitude         float64          `json:"longitude,omitempty"`
 	CountryOverride   string           `json:"country_override,omitempty"`
+	AlertsMuted       bool             `json:"alerts_muted,omitempty"`
 	LastSeen          time.Time        `json:"last_seen,omitempty"`
 	FirstSeen         time.Time        `json:"first_seen,omitempty"`
 	CreatedAt         time.Time        `json:"created_at"`

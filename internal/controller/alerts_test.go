@@ -60,6 +60,79 @@ func TestAlertEngineFiresAndResolvesResourceRule(t *testing.T) {
 	}
 }
 
+func TestAlertEngineSkipsMutedNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir()+"/alerts.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	node := model.Node{ID: "node_muted", Name: "Muted node", Status: model.NodePending}
+	if err := st.CreateNode(ctx, node, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	rule := model.AlertRule{ID: "rule_muted", Name: "Muted test", Type: model.AlertCPUHigh, Enabled: true, Threshold: 80}
+	if err := st.CreateAlertRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
+	engine := newAlertEngine(st, nil, testLogger())
+	report := func(sequence uint64, cpu float64) {
+		t.Helper()
+		if err := st.UpdateReport(ctx, model.Report{
+			ProtocolVersion: model.ProtocolVersion,
+			NodeID:          node.ID,
+			SentAtUnix:      time.Now().Unix(),
+			Sequence:        sequence,
+			AgentVersion:    "test",
+			Metrics:         model.MetricsSnapshot{CPUPercent: cpu},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.evaluateNode(ctx, node.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	countEvents := func() int {
+		t.Helper()
+		events, err := st.ListAlertEvents(ctx, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(events)
+	}
+
+	report(1, 95)
+	if active, err := st.CountActiveAlerts(ctx); err != nil || active != 1 {
+		t.Fatalf("active alerts before mute = %d, %v", active, err)
+	}
+	firedEvents := countEvents()
+
+	muted, err := st.SetNodeAlertsMuted(ctx, node.ID, true)
+	if err != nil || !muted.AlertsMuted {
+		t.Fatalf("mute node = %#v, %v", muted, err)
+	}
+	if active, err := st.CountActiveAlerts(ctx); err != nil || active != 0 {
+		t.Fatalf("active alerts after mute = %d, %v", active, err)
+	}
+	report(2, 99)
+	report(3, 10)
+	if got := countEvents(); got != firedEvents {
+		t.Fatalf("muted node produced events: %d -> %d", firedEvents, got)
+	}
+	state, _, err := st.GetAlertState(ctx, rule.ID, node.ID)
+	if err != nil || state.Status != "resolved" {
+		t.Fatalf("muted alert state = %#v, %v", state, err)
+	}
+
+	if _, err := st.SetNodeAlertsMuted(ctx, node.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	report(4, 97)
+	if got := countEvents(); got != firedEvents+1 {
+		t.Fatalf("unmuted node events = %d, want %d", got, firedEvents+1)
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

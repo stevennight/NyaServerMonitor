@@ -213,6 +213,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/nodes/{id}/install", s.withAuth(s.handleNodeInstall))
 	s.mux.HandleFunc("POST /api/nodes/{id}/update", s.withAuth(s.handleUpdateNode))
 	s.mux.HandleFunc("POST /api/nodes/update", s.withAuth(s.handleUpdateAllNodes))
+	s.mux.HandleFunc("PUT /api/nodes/{id}/alerts", s.withAuth(s.handleNodeAlerts))
 	s.mux.HandleFunc("POST /api/nodes/{id}/revoke", s.withAuth(s.handleRevokeNode))
 	s.mux.HandleFunc("POST /api/nodes/{id}/restore", s.withAuth(s.handleRestoreNode))
 	s.mux.HandleFunc("GET /install.sh", s.handleInstallScript)
@@ -1409,6 +1410,37 @@ func (s *Server) sealNodeToken(token string) (string, error) {
 		return "", nil
 	}
 	return s.tokenBox.seal(token)
+}
+
+type nodeAlertsRequest struct {
+	Muted *bool `json:"muted"`
+}
+
+func (s *Server) handleNodeAlerts(w http.ResponseWriter, r *http.Request, session auth.Session) {
+	var input nodeAlertsRequest
+	if err := decodeJSON(w, r, 1024, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.Muted == nil {
+		writeError(w, http.StatusBadRequest, "muted is required")
+		return
+	}
+	node, err := s.store.SetNodeAlertsMuted(r.Context(), r.PathValue("id"), *input.Muted)
+	if errors.Is(err, store.ErrNodeNotFound) {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "unable to update node alerts")
+		return
+	}
+	action := "node_alerts_unmuted"
+	if node.AlertsMuted {
+		action = "node_alerts_muted"
+	}
+	_ = s.store.AddAudit(r.Context(), session.Username, action, node.ID, nil)
+	writeJSON(w, http.StatusOK, node)
 }
 
 func (s *Server) handleRevokeNode(w http.ResponseWriter, r *http.Request, session auth.Session) {

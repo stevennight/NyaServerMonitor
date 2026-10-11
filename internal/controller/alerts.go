@@ -106,6 +106,17 @@ func (e *alertEngine) evaluateRule(ctx context.Context, rule model.AlertRule, no
 	if !exists {
 		state = model.AlertState{RuleID: rule.ID, NodeID: node.ID, Status: "resolved"}
 	}
+	if node.AlertsMuted {
+		// Keep tracking the latest value and TLS fingerprint so un-muting does not
+		// replay changes that happened while muted, but never fire or notify.
+		state.Status = "resolved"
+		state.Value = condition.value
+		state.Message = condition.message
+		state.Fingerprint = condition.fingerprint
+		state.FirstTriggeredAt = time.Time{}
+		state.LastEvaluatedAt = now
+		return e.store.UpsertAlertState(ctx, state)
+	}
 	previousStatus := state.Status
 	previousFirst := state.FirstTriggeredAt
 	if rule.Type == model.AlertTLSChanged && condition.active {

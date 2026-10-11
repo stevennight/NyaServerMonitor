@@ -383,6 +383,7 @@ func (s *Store) ensureNodeColumns(ctx context.Context) error {
 		"update_error":        "TEXT NOT NULL DEFAULT ''",
 		"update_requested_at": "TEXT NOT NULL DEFAULT ''",
 		"update_finished_at":  "TEXT NOT NULL DEFAULT ''",
+		"alerts_muted":        "INTEGER NOT NULL DEFAULT 0",
 	} {
 		if _, ok := columns[name]; ok {
 			continue
@@ -652,7 +653,7 @@ func (s *Store) listNodes(ctx context.Context, where string) ([]model.Node, erro
 		       public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
 		       country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
-		       desired_version, update_status, update_error, update_requested_at, update_finished_at
+		       desired_version, update_status, update_error, update_requested_at, update_finished_at, alerts_muted
 		FROM nodes `+where+` ORDER BY name COLLATE NOCASE, id`)
 	if err != nil {
 		return nil, err
@@ -1016,6 +1017,24 @@ func (s *Store) SetNodeRevoked(ctx context.Context, id string, revoked bool) err
 		return ErrNodeNotFound
 	}
 	return nil
+}
+
+// SetNodeAlertsMuted turns alert evaluation for one node off or back on. A muted
+// node never fires or notifies; its alert states are quietly resolved.
+func (s *Store) SetNodeAlertsMuted(ctx context.Context, id string, muted bool) (model.Node, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE nodes SET alerts_muted = ?, updated_at = ? WHERE id = ?`, boolInt(muted), time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return model.Node{}, err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return model.Node{}, ErrNodeNotFound
+	}
+	if muted {
+		if _, err := s.db.ExecContext(ctx, `UPDATE alert_states SET status = 'resolved', first_triggered_at = '' WHERE node_id = ?`, id); err != nil {
+			return model.Node{}, err
+		}
+	}
+	return s.GetNode(ctx, id)
 }
 
 func (s *Store) MarkOffline(ctx context.Context, before time.Time) error {
@@ -1481,7 +1500,7 @@ func (s *Store) CountActiveAlerts(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM alert_states a JOIN nodes n ON n.id = a.node_id
-		WHERE a.status = 'firing' AND n.revoked = 0`).Scan(&count)
+		WHERE a.status = 'firing' AND n.revoked = 0 AND n.alerts_muted = 0`).Scan(&count)
 	return count, err
 }
 
@@ -1501,7 +1520,7 @@ func (s *Store) nodeRecord(ctx context.Context, id string) (nodeRecord, error) {
 		       public_ipv4, public_ipv6, ip_override, country, country_code, region, region_code, city, latitude, longitude,
 		       country_lookup_ip, country_override,
 		       last_seen, first_seen, created_at, updated_at, sequence, system_json, last_report_json,
-		       desired_version, update_status, update_error, update_requested_at, update_finished_at
+		       desired_version, update_status, update_error, update_requested_at, update_finished_at, alerts_muted
 		FROM nodes WHERE id = ?`, id)
 	return scanNodeRecord(row)
 }
@@ -1509,7 +1528,7 @@ func (s *Store) nodeRecord(ctx context.Context, id string) (nodeRecord, error) {
 func scanNodeRecord(row scanner) (nodeRecord, error) {
 	var record nodeRecord
 	var tagsJSON, status string
-	var revoked int
+	var revoked, alertsMuted int
 	var lastSeen, firstSeen, created, updated, systemJSON, reportJSON string
 	var updateStatus, updateRequestedAt, updateFinishedAt string
 	if err := row.Scan(&record.Node.ID, &record.Node.Name, &record.Node.Group, &tagsJSON, &record.TokenHash, &record.TokenCiphertext,
@@ -1518,11 +1537,12 @@ func scanNodeRecord(row scanner) (nodeRecord, error) {
 		&record.Node.Latitude, &record.Node.Longitude, &record.CountryLookupIP, &record.Node.CountryOverride,
 		&lastSeen, &firstSeen,
 		&created, &updated, &record.Node.Sequence, &systemJSON, &reportJSON, &record.Node.DesiredVersion,
-		&updateStatus, &record.Node.UpdateError, &updateRequestedAt, &updateFinishedAt); err != nil {
+		&updateStatus, &record.Node.UpdateError, &updateRequestedAt, &updateFinishedAt, &alertsMuted); err != nil {
 		return nodeRecord{}, err
 	}
 	record.Node.Status = model.NodeStatus(status)
 	record.Revoked = revoked == 1
+	record.Node.AlertsMuted = alertsMuted == 1
 	model.NormalizeNodeCountry(&record.Node)
 	model.NormalizeNodeGeo(&record.Node)
 	_ = json.Unmarshal([]byte(tagsJSON), &record.Node.Tags)
